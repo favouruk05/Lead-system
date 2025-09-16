@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Lead Scraper & Manager</title>
+<style>
+  * { box-sizing: border-box; }
+  :root{ --accent:#7e3ace; --bg:#f7f7fb; --card:#fff; --text:#1f2330; --muted:#6b7280; --border:#e5e7eb; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); margin:0; padding:12px; font-size:14px; line-height:1.4; }
+  .wrap { max-width:100%; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+  h1 { font-size:20px; margin:0 0 8px 0; font-weight:600; line-height:1.2; }
+  .subtitle { color:var(--muted); margin-bottom:16px; font-size:14px; }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; font-weight:500; }
+  input[type=text]{ width:100%; padding:12px; border:1.5px solid var(--border); border-radius:8px; font-size:16px; background:#fff; -webkit-appearance:none; }
+  input[type=text]:focus{ outline:none; border-color:var(--accent); }
+  .form-group{ margin-bottom:16px; }
+  .button-row{ display:flex; gap:8px; flex-wrap:wrap; }
+  .btn{ flex:1; min-width:120px; padding:12px 16px; border:2px solid var(--accent); background:var(--accent); color:#fff; border-radius:8px; cursor:pointer; font-size:14px; font-weight:600; text-align:center; transition:all .2s; }
+  .btn:active{ transform:translateY(1px); }
+  .btn.secondary{ background:#fff; color:var(--accent); }
+  .btn.small{ flex:none; min-width:auto; padding:6px 12px; font-size:12px; font-weight:500; }
+  .table-wrapper{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin:-16px; padding:16px; }
+  table{ width:100%; min-width:600px; border-collapse:collapse; font-size:13px; }
+  th,td{ padding:12px 8px; text-align:left; border-bottom:1px solid var(--border); vertical-align:top; }
+  th{ background:var(--bg); font-weight:600; color:var(--text); position:sticky; top:0; }
+  .batch-id{ font-family:monospace; font-size:11px; color:var(--muted); }
+  .badge{ display:inline-block; padding:4px 8px; border-radius:12px; font-size:11px; font-weight:500; background:var(--bg); border:1px solid var(--border); }
+  .badge.completed{ background:#dcfce7; color:#166534; border-color:#bbf7d0; }
+  .badge.processing{ background:#fef3c7; color:#92400e; border-color:#fde68a; }
+  .actions{ display:flex; gap:4px; flex-wrap:wrap; }
+  .link{ color:var(--accent); text-decoration:none; font-weight:500; }
+  .link:hover{ text-decoration:underline; }
+  .empty-state{ text-align:center; padding:32px 16px; color:var(--muted); }
+  @media (min-width:768px){
+    body{ padding:24px; font-size:14px; }
+    .wrap{ max-width:1200px; margin:0 auto; gap:24px; }
+    .card{ padding:24px; border-radius:12px; }
+    h1{ font-size:24px; margin-bottom:12px; }
+    .subtitle{ font-size:16px; margin-bottom:24px; }
+    input[type=text]{ font-size:14px; padding:10px 12px; }
+    .form-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .btn{ flex:none; min-width:140px; }
+    table{ min-width:700px; font-size:14px; }
+    th,td{ padding:12px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Lead Scraper</h1>
+    <p class="subtitle">Submit a new search, then manage recent batches below.</p>
+    <form id="scrapeForm">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Business Type</label>
+          <input type="text" id="search_term" placeholder="e.g., plumber" required />
+        </div>
+        <div class="form-group">
+          <label>Location</label>
+          <input type="text" id="location" placeholder="e.g., Lekki, Lagos" required />
+        </div>
+      </div>
+      <div class="button-row">
+        <button class="btn" type="submit">Scrape 5 Leads</button>
+        <button class="btn secondary" type="button" id="refreshBtn">Refresh</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h1>Recent Batches</h1>
+    <div class="table-wrapper">
+      <table id="batchesTable">
+        <thead>
+          <tr>
+            <th>Batch</th>
+            <th>Criteria</th>
+            <th>Date</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" id="leadsCard" style="display:none;">
+    <h1>Leads in Batch</h1>
+    <p class="subtitle" id="batchTitle"></p>
+    <div class="table-wrapper">
+      <table id="leadsTable">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Phone</th>
+            <th>Website</th>
+            <th>Rating</th>
+            <th>Reviews</th>
+            <th>Address</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+/** Base URL for your n8n instance */
+const BASE = 'https://n8n.autocraft.site';
+
+/** Generate or read a persistent per-browser client_id */
+function getClientId(){
+  let id = localStorage.getItem('client_id');
+  if (!id) {
+    id = (crypto && crypto.randomUUID) ? crypto.randomUUID()
+      : 'cid_' + Math.random().toString(36).slice(2) + Date.now();
+    localStorage.setItem('client_id', id);
+  }
+  return id;
+}
+const CLIENT_ID = getClientId();
+
+/** tiny DOM helper */
+const h = (tag, attrs={}, ...kids) => {
+  const el = document.createElement(tag);
+  Object.entries(attrs||{}).forEach(([k,v])=>{
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k,v);
+  });
+  kids.forEach(k => {
+    if (k == null) return;
+    if (typeof k === 'string') el.appendChild(document.createTextNode(k));
+    else el.appendChild(k);
+  });
+  return el;
+};
+
+/** fetch wrapper (no API key) */
+async function fetchJSON(url, opts={}) {
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  try { return await res.json(); } catch { return {}; }
+}
+
+/** Build a key to identify the latest batch by criteria */
+function criteriaKey(search_term, location) {
+  return `${(search_term||'').trim().toLowerCase()}::${(location||'').trim().toLowerCase()}`;
+}
+
+/** Render table and also return the list for logic */
+async function loadBatchesAndReturn() {
+  const tbody = document.querySelector('#batchesTable tbody');
+  tbody.innerHTML = '';
+  try {
+    const data = await fetchJSON(`${BASE}/webhook/ui/batches?client_id=${encodeURIComponent(CLIENT_ID)}`);
+    const list = data.data || [];
+
+    list.forEach(b => {
+      const actions = h('div', {class:'actions'},
+        h('button', {class:'btn small secondary', onclick:()=>showLeads(b)}, 'View'),
+        h('button', {class:'btn small secondary', onclick:()=>rerun(b)}, 'Re-run'),
+        h('button', {class:'btn small', onclick:()=>delBatch(b)}, 'Delete'),
+      );
+
+      const criteria = `${b.search_term} – ${b.location}`;
+      const shortId = b.batch_id && b.batch_id.length > 20 ? b.batch_id.substring(0, 20) + '…' : (b.batch_id || '—');
+
+      const statusRaw = (b.status || '').toLowerCase();
+      const statusClass = statusRaw.includes('complet') ? 'completed'
+                        : (statusRaw.includes('active') || statusRaw.includes('process')) ? 'processing'
+                        : '';
+
+      tbody.appendChild(h('tr', {},
+        h('td', {}, h('span', {class:'batch-id'}, shortId)),
+        h('td', {}, criteria),
+        h('td', {}, b.date_created ? new Date(b.date_created).toLocaleString() : '—'),
+        h('td', {}, h('span', {class:`badge ${statusClass}`}, b.status || '—')),
+        h('td', {}, actions),
+      ));
+    });
+
+    if (list.length === 0) {
+      tbody.appendChild(h('tr',{}, h('td',{colspan:'5', class:'empty-state'}, 'No batches found')));
+    }
+    return list;
+  } catch(e) {
+    tbody.appendChild(h('tr',{}, h('td',{colspan:'5', class:'empty-state'}, `Error: ${e.message}`)));
+    return [];
+  }
+}
+
+/** Lightweight polling until new batch appears & completes */
+async function pollForNewBatch({search_term, location, timeoutMs=45000, intervalMs=2000, waitForCompleted=true}) {
+  const targetKey = criteriaKey(search_term, location);
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const list = await loadBatchesAndReturn();
+
+    // index newest batch per criteria
+    const idx = new Map();
+    list.forEach(b => {
+      const key = criteriaKey(b.search_term, b.location);
+      const prev = idx.get(key);
+      if (!prev || (b.date_created||'') > (prev.date_created||'')) {
+        idx.set(key, b);
+      }
+    });
+
+    const found = idx.get(targetKey);
+    if (found) {
+      if (!waitForCompleted) return true;
+      const status = (found.status || '').toLowerCase();
+      if (status.includes('complet')) return true;
+      // else keep polling until Completed
+    }
+
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return false; // Timed out (still fine; user can click Refresh)
+}
+
+/** Show leads for a batch */
+async function showLeads(batch) {
+  const leadsCard = document.getElementById('leadsCard');
+  const title = document.getElementById('batchTitle');
+  title.textContent = batch.batch_id || '';
+  const tbody = document.querySelector('#leadsTable tbody');
+  tbody.innerHTML = '';
+  leadsCard.style.display = 'block';
+
+  try {
+    const url = `${BASE}/webhook/ui/leads?batch_id=${encodeURIComponent(batch.batch_id)}&client_id=${encodeURIComponent(CLIENT_ID)}`;
+    const data = await fetchJSON(url);
+    const rows = data.data || [];
+    rows.forEach(l => {
+      tbody.appendChild(h('tr',{},
+        h('td',{}, l.name || 'N/A'),
+        h('td',{}, l.phone || '—'),
+        h('td',{}, l.website ? h('a',{href:l.website,target:'_blank',class:'link'}, 'Website') : '—'),
+        h('td',{}, (l.rating || l.rating === 0) ? `★ ${l.rating}` : '—'),
+        h('td',{}, (l.reviews || l.reviews === 0) ? String(l.reviews) : '—'),
+        h('td',{}, l.address || '—')
+      ));
+    });
+    if (rows.length === 0) {
+      tbody.appendChild(h('tr',{}, h('td',{colspan:'6',class:'empty-state'}, 'No leads found')));
+    }
+  } catch(e) {
+    tbody.appendChild(h('tr',{}, h('td',{colspan:'6',class:'empty-state'}, `Error: ${e.message}`)));
+  }
+}
+
+/** Trigger rerun by record_id (and client_id) */
+async function rerun(b) {
+  if (!confirm('Re-run scraping for this batch?')) return;
+  try {
+    const res = await fetch(`${BASE}/webhook/rerun-scraping`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ record_id: b.record_id, client_id: CLIENT_ID })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    alert('Re-run queued. It will appear in the list shortly.');
+    await loadBatchesAndReturn();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+/** Delete a batch by batch_id (and client_id) */
+async function delBatch(b) {
+  if (!confirm('Delete this batch and its leads?')) return;
+  try {
+    const res = await fetch(`${BASE}/webhook/delete-batch`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ batch_id: b.batch_id, client_id: CLIENT_ID })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    alert('Deleted.');
+    loadBatchesAndReturn();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+/** Submit new scrape + start polling (send client_id) */
+document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const search_term = document.getElementById('search_term').value.trim();
+  const location = document.getElementById('location').value.trim();
+  if (!search_term || !location) return;
+
+  try {
+    const res = await fetch(`${BASE}/webhook/scrape-leads`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ search_term, location, client_id: CLIENT_ID })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadBatchesAndReturn();
+    pollForNewBatch({ search_term, location, timeoutMs:45000, intervalMs:2000, waitForCompleted:true });
+  } catch(e) {
+    alert('Failed: ' + e.message);
+  }
+});
+
+/** manual refresh */
+document.getElementById('refreshBtn').addEventListener('click', loadBatchesAndReturn);
+
+/** initial render */
+loadBatchesAndReturn();
+</script>
+</body>
+</html>
