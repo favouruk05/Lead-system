@@ -285,28 +285,8 @@ function findNewestForCriteria(list, search_term, location) {
   return newest;
 }
 
-/** Stage 1: Poll until the new batch appears in "Processing" (active/process).
- *  Returns true if found (and refreshes the table each loop).
- */
-async function pollUntilProcessing({search_term, location, minDateIso=null, timeoutMs=45000, intervalMs=2000}) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const list = await loadBatchesAndReturn();
-    const newest = findNewestForCriteria(list, search_term, location);
-    if (newest) {
-      const dc = newest.date_created || '';
-      const isNew = !minDateIso || (dc && dc > minDateIso);
-      const status = (newest.status || '').toLowerCase();
-      const isProcessing = status.includes('active') || status.includes('process');
-      if (isNew && isProcessing) return true;
-    }
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
-  return false;
-}
-
-/** Stage 2: Poll until the same criteria flips to Completed. */
-async function pollUntilCompleted({search_term, location, minDateIso=null, timeoutMs=90000, intervalMs=2000}) {
+/** Single-stage poll: wait until Completed (refresh table each loop) */
+async function pollUntilCompleted({search_term, location, minDateIso=null, timeoutMs=120000, intervalMs=2000}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const list = await loadBatchesAndReturn();
@@ -353,15 +333,15 @@ async function showLeads(batch) {
   }
 }
 
-/** Re-run: two-stage polling (Processing → Completed) */
+/** Re-run: show instruction toast + only Completed polling */
 async function rerun(b) {
   if (!confirm('Re-run scraping for this batch?')) return;
   const minDateIso = new Date().toISOString();
-  const t = showToast({
+  showToast({
     title: 'Re-run started…',
-    desc: 'Waiting for your scraping to enter processing…',
+    desc: 'Click “Refresh” to see Processing. We’ll auto-update when it completes.',
     variant: 'info',
-    sticky: true
+    duration: 6000
   });
   try {
     const res = await fetch(`${BASE}/webhook/rerun-scraping`, {
@@ -371,22 +351,7 @@ async function rerun(b) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    // Stage 1: wait until we see Processing
-    const gotProcessing = await pollUntilProcessing({
-      search_term: b.search_term,
-      location: b.location,
-      minDateIso,
-      timeoutMs: 60000,
-      intervalMs: 2000
-    });
-
-    if (gotProcessing) {
-      t.update({ title:'Processing…', desc:'Your scraping is currently processing.', variant:'warn', autoCloseMs: 2000 });
-    } else {
-      t.update({ title:'Still queuing…', desc:'Processing not detected yet. We’ll keep watching for completion.', variant:'warn', autoCloseMs: 2500 });
-    }
-
-    // Stage 2: then wait until Completed
+    // Only poll for Completed (table refreshes each loop)
     const done = await pollUntilCompleted({
       search_term: b.search_term,
       location: b.location,
@@ -398,7 +363,7 @@ async function rerun(b) {
     if (done) {
       showToast({ title:'Re-run completed', desc:'Latest batch is ready.', variant:'success', duration: 2800 });
     } else {
-      showToast({ title:'Re-run queued', desc:'It will appear shortly. You can refresh anytime.', variant:'info', duration: 4200 });
+      showToast({ title:'Re-run queued', desc:'Completion not detected yet. You can refresh anytime.', variant:'warn', duration: 4200 });
     }
   } catch(e) {
     showToast({ title:'Re-run failed', desc:e.message, variant:'error', duration:5200 });
@@ -408,7 +373,7 @@ async function rerun(b) {
 /** Delete a batch by batch_id (and client_id) */
 async function delBatch(b) {
   if (!confirm('Delete this batch and its leads?')) return;
-  const t = showToast({ title:'Deleting…', desc:'Removing this batch.', variant:'info', sticky:true });
+  const t = showToast({ title:'Deleting…', desc:'Removing this batch.', variant:'info', duration: 2000 });
   try {
     const res = await fetch(`${BASE}/webhook/delete-batch`, {
       method:'POST',
@@ -417,13 +382,13 @@ async function delBatch(b) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     await loadBatchesAndReturn();
-    t.update({ title:'Deleted', desc:'The batch has been removed.', variant:'success', autoCloseMs:2400 });
+    showToast({ title:'Deleted', desc:'The batch has been removed.', variant:'success', duration:2400 });
   } catch(e) {
-    t.update({ title:'Delete failed', desc:e.message, variant:'error', autoCloseMs:5200 });
+    showToast({ title:'Delete failed', desc:e.message, variant:'error', duration:5200 });
   }
 }
 
-/** Submit new scrape: two-stage polling (Processing → Completed) */
+/** Submit new scrape: show instruction toast + only Completed polling */
 document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const search_term = document.getElementById('search_term').value.trim();
@@ -431,11 +396,11 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
   if (!search_term || !location) return;
 
   const minDateIso = new Date().toISOString();
-  const t = showToast({
+  showToast({
     title: 'Scrape queued…',
-    desc: 'Waiting for your scraping to enter processing…',
+    desc: 'Click “Refresh” to see Processing. We’ll auto-update when it completes.',
     variant: 'info',
-    sticky: true
+    duration: 6000
   });
 
   try {
@@ -446,22 +411,7 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    // Stage 1: wait until we see Processing
-    const gotProcessing = await pollUntilProcessing({
-      search_term,
-      location,
-      minDateIso,
-      timeoutMs: 60000,
-      intervalMs: 2000
-    });
-
-    if (gotProcessing) {
-      t.update({ title:'Processing…', desc:'Your scraping is currently processing.', variant:'warn', autoCloseMs: 2000 });
-    } else {
-      t.update({ title:'Still queuing…', desc:'Processing not detected yet. We’ll keep watching for completion.', variant:'warn', autoCloseMs: 2500 });
-    }
-
-    // Stage 2: then wait until Completed
+    // Only poll for Completed (table refreshes each loop)
     const done = await pollUntilCompleted({
       search_term,
       location,
@@ -473,7 +423,7 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
     if (done) {
       showToast({ title:'Scrape completed', desc:'Your batch is ready.', variant:'success', duration: 2800 });
     } else {
-      showToast({ title:'Scrape queued', desc:'It will appear shortly. You can refresh anytime.', variant:'info', duration: 4200 });
+      showToast({ title:'Scrape queued', desc:'Completion not detected yet. You can refresh anytime.', variant:'warn', duration: 4200 });
     }
   } catch(e) {
     showToast({ title:'Scrape failed', desc:e.message, variant:'error', duration:5200 });
