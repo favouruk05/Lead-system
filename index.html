@@ -6,38 +6,43 @@
 <title>Lead Scraper & Manager</title>
 <style>
   * { box-sizing: border-box; }
-  :root{ --accent:#7e3ace; --bg:#f7f7fb; --card:#fff; --text:#1f2330; --muted:#6b7280; --border:#e5e7eb;
-         --ok:#16a34a; --warn:#92400e; --info:#2563eb; --err:#b91c1c; }
+  :root{
+    --accent:#7e3ace; --accent-2:#9c5df0; --accent-3:#b892ff;
+    --bg:#f7f5fb; --card:#fff; --text:#1f2330; --muted:#6b7280; --border:#e5e7eb;
+    --ok:#16a34a; --warn:#92400e; --err:#b91c1c;
+    --purple-soft:#f3e8ff; --purple-strong:#5b21b6;
+  }
   body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); margin:0; padding:12px; font-size:14px; line-height:1.4; }
   .wrap { max-width:100%; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
-  h1 { font-size:20px; margin:0 0 8px 0; font-weight:600; line-height:1.2; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,0.06); }
+  h1 { font-size:20px; margin:0 0 8px 0; font-weight:700; line-height:1.2; }
   .subtitle { color:var(--muted); margin-bottom:16px; font-size:14px; }
   label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; font-weight:500; }
-  input[type=text]{ width:100%; padding:12px; border:1.5px solid var(--border); border-radius:8px; font-size:16px; background:#fff; -webkit-appearance:none; }
-  input[type=text]:focus{ outline:none; border-color:var(--accent); }
+  input[type=text]{ width:100%; padding:12px; border:1.8px solid var(--border); border-radius:10px; font-size:16px; background:#fff; -webkit-appearance:none; }
+  input[type=text]:focus{ outline:none; border-color:var(--accent); box-shadow: 0 0 0 3px rgba(126,58,206,.12); }
   .form-group{ margin-bottom:16px; }
   .button-row{ display:flex; gap:8px; flex-wrap:wrap; }
-  .btn{ flex:1; min-width:120px; padding:12px 16px; border:2px solid var(--accent); background:var(--accent); color:#fff; border-radius:8px; cursor:pointer; font-size:14px; font-weight:600; text-align:center; transition:all .2s; }
+  .btn{ flex:1; min-width:120px; padding:12px 16px; border:2px solid var(--accent); background:var(--accent); color:#fff; border-radius:10px; cursor:pointer; font-size:14px; font-weight:700; text-align:center; transition:all .16s; }
   .btn:active{ transform:translateY(1px); }
   .btn.secondary{ background:#fff; color:var(--accent); }
-  .btn.small{ flex:none; min-width:auto; padding:6px 12px; font-size:12px; font-weight:500; }
+  .btn.small{ flex:none; min-width:auto; padding:6px 12px; font-size:12px; font-weight:600; }
   .table-wrapper{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin:-16px; padding:16px; }
   table{ width:100%; min-width:600px; border-collapse:collapse; font-size:13px; }
   th,td{ padding:12px 8px; text-align:left; border-bottom:1px solid var(--border); vertical-align:top; }
-  th{ background:var(--bg); font-weight:600; color:var(--text); position:sticky; top:0; }
-  .batch-id{ font-family:monospace; font-size:11px; color:var(--muted); }
-  .badge{ display:inline-block; padding:4px 8px; border-radius:12px; font-size:11px; font-weight:500; background:var(--bg); border:1px solid var(--border); }
+  th{ background:var(--bg); font-weight:700; color:var(--text); position:sticky; top:0; }
+  .batch-id{ font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; color:var(--muted); }
+  .badge{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:700; background:var(--bg); border:1px solid var(--border); letter-spacing:.2px; }
   .badge.completed{ background:#dcfce7; color:#166534; border-color:#bbf7d0; }
-  .badge.processing{ background:#fef3c7; color:#92400e; border-color:#fde68a; }
+  .badge.processing{ background:var(--purple-soft); color:var(--purple-strong); border-color:#e9d5ff; }
   .actions{ display:flex; gap:4px; flex-wrap:wrap; }
-  .link{ color:var(--accent); text-decoration:none; font-weight:500; }
+  .link{ color:var(--accent); text-decoration:none; font-weight:600; }
   .link:hover{ text-decoration:underline; }
   .empty-state{ text-align:center; padding:32px 16px; color:var(--muted); }
+
   @media (min-width:768px){
     body{ padding:24px; font-size:14px; }
     .wrap{ max-width:1200px; margin:0 auto; gap:24px; }
-    .card{ padding:24px; border-radius:12px; }
+    .card{ padding:24px; }
     h1{ font-size:24px; margin-bottom:12px; }
     .subtitle{ font-size:16px; margin-bottom:24px; }
     input[type=text]{ font-size:14px; padding:10px 12px; }
@@ -47,33 +52,33 @@
     th,td{ padding:12px; }
   }
 
-  /* Toasts (top-right) */
+  /* Purple Toasts (top-right) */
   .toast-wrap{
     position: fixed; top: 16px; right: 16px; width: min(360px, 92vw);
     display: flex; flex-direction: column; gap: 10px; z-index: 9999;
   }
   .toast{
     background: #fff; border: 1px solid var(--border); border-left-width: 6px;
-    border-radius: 10px; padding: 12px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.08);
+    border-radius: 12px; padding: 12px 14px; box-shadow: 0 10px 26px rgba(126,58,206,.18);
     display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start;
     animation: slideIn .18s ease-out;
   }
-  .toast.info{ border-left-color: var(--info); }
+  .toast.info{ border-left-color: var(--accent-2); }
   .toast.success{ border-left-color: var(--ok); }
-  .toast.warn{ border-left-color: var(--warn); }
+  .toast.warn{ border-left-color: #a855f7; }
   .toast.error{ border-left-color: var(--err); }
-  .toast-title{ font-weight: 600; margin: 0; font-size: 14px; }
+  .toast-title{ font-weight: 800; margin: 0; font-size: 14px; color: var(--text);}
   .toast-desc{ margin: 0; color: var(--muted); font-size: 13px; grid-column: 1 / span 2; }
   .toast .close{
     border: none; background: transparent; font-size: 18px; line-height: 1;
-    color: #444; cursor: pointer; padding: 0 4px;
+    color: var(--accent-2); cursor: pointer; padding: 0 4px;
   }
   .toast .timerbar{
-    height: 3px; background: rgba(0,0,0,.08); border-radius: 2px; overflow: hidden; grid-column: 1 / span 2;
+    height: 3px; background: #efe7ff; border-radius: 2px; overflow: hidden; grid-column: 1 / span 2;
   }
   .toast .timerbar > i{
     display:block; height:100%; width: 100%;
-    background: linear-gradient(90deg, var(--accent), #9c5df0);
+    background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent-3));
     transform-origin: left; animation: shrink linear forwards;
   }
   @keyframes slideIn { from{ transform: translateY(-6px); opacity: 0; } to{ transform: translateY(0); opacity: 1; } }
@@ -184,10 +189,10 @@ async function fetchJSON(url, opts={}) {
   try { return await res.json(); } catch { return {}; }
 }
 
-/** Toast system */
+/** Toast system (purple) */
 const toastWrap = document.getElementById('toastWrap');
 let _toastIdx = 0;
-function showToast({title='Notice', desc='', variant='info', duration=4000, sticky=false}) {
+function showToast({title='Notice', desc='', variant='info', duration=3500, sticky=false}) {
   const id = `t_${++_toastIdx}`;
   const closeBtn = h('button', {class:'close', 'aria-label':'Close', onclick:()=>removeToast(id)}, '×');
   const timerBar = h('div', {class:'timerbar'}, h('i', {style: !sticky ? `animation-duration:${duration}ms` : 'display:none'}));
@@ -198,21 +203,17 @@ function showToast({title='Notice', desc='', variant='info', duration=4000, stic
     timerBar
   );
   toastWrap.appendChild(node);
-  if (!sticky) {
-    setTimeout(()=> removeToast(id), duration);
-  }
+  if (!sticky) setTimeout(()=> removeToast(id), duration);
   return {
     id,
     update: ({title:title2, desc:desc2, variant:var2='success', autoCloseMs=2500}={}) => {
       if (title2) node.querySelector('.toast-title').textContent = title2;
       if (desc2 !== undefined) node.querySelector('.toast-desc').textContent = desc2;
       node.className = `toast ${var2}`;
-      // reset/auto-close
       const bar = node.querySelector('.timerbar > i');
       bar.style.display = 'block';
       bar.style.animation = 'none';
-      // force reflow to restart animation
-      void bar.offsetWidth;
+      void bar.offsetWidth; // restart animation
       bar.style.animation = `shrink ${autoCloseMs}ms linear forwards`;
       setTimeout(()=> removeToast(id), autoCloseMs);
     }
@@ -272,7 +273,18 @@ async function loadBatchesAndReturn() {
   }
 }
 
-/** Poll until new batch appears & completes. minDateIso ensures we watch only new runs */
+/** Rapid refresh helper: refresh table every `intervalMs` for `durationMs` */
+async function rapidRefresh(durationMs=10000, intervalMs=1000) {
+  const start = Date.now();
+  while (Date.now() - start < durationMs) {
+    await loadBatchesAndReturn();
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+}
+
+/** Poll until new batch appears & completes (after rapid refresh).
+ *  minDateIso ensures we watch only new runs
+ */
 async function pollForNewBatch({search_term, location, minDateIso=null, timeoutMs=90000, intervalMs=2000, waitForCompleted=true}) {
   const targetKey = criteriaKey(search_term, location);
   const start = Date.now();
@@ -337,13 +349,13 @@ async function showLeads(batch) {
   }
 }
 
-/** Trigger rerun by record_id (and client_id) with toast + polling */
+/** Trigger rerun by record_id (and client_id) with purple toast + rapid refresh + polling */
 async function rerun(b) {
   if (!confirm('Re-run scraping for this batch?')) return;
   const minDateIso = new Date().toISOString(); // only accept newer batches
   const t = showToast({
     title: 'Re-running…',
-    desc: 'Fetching a fresh batch. The table will auto-refresh.',
+    desc: 'Fetching a fresh batch. The table will refresh.',
     variant: 'info',
     sticky: true
   });
@@ -355,7 +367,11 @@ async function rerun(b) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
+    // instant refresh (to show "Active/Processing" row ASAP)
     await loadBatchesAndReturn();
+    // rapid refresh for first 10s to make it feel instant
+    await rapidRefresh(10000, 1000);
+    // then poll until Completed
     const ok = await pollForNewBatch({
       search_term: b.search_term,
       location: b.location,
@@ -364,10 +380,10 @@ async function rerun(b) {
       intervalMs: 2000,
       waitForCompleted: true
     });
-    if (ok) t.update({ title: 'Re-run completed', desc: 'Latest batch is ready.', variant: 'success', autoCloseMs: 3000 });
-    else t.update({ title: 'Re-run queued', desc: 'It will appear shortly. You can refresh anytime.', variant: 'warn', autoCloseMs: 4500 });
+    if (ok) t.update({ title: 'Re-run completed', desc: 'Latest batch is ready.', variant: 'success', autoCloseMs: 2800 });
+    else t.update({ title: 'Re-run queued', desc: 'It will appear shortly. You can refresh anytime.', variant: 'warn', autoCloseMs: 4200 });
   } catch(e) {
-    t.update({ title: 'Re-run failed', desc: e.message, variant: 'error', autoCloseMs: 5000 });
+    t.update({ title: 'Re-run failed', desc: e.message, variant: 'error', autoCloseMs: 5200 });
   }
 }
 
@@ -383,13 +399,13 @@ async function delBatch(b) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     await loadBatchesAndReturn();
-    t.update({ title:'Deleted', desc:'The batch has been removed.', variant:'success', autoCloseMs:2500 });
+    t.update({ title:'Deleted', desc:'The batch has been removed.', variant:'success', autoCloseMs:2400 });
   } catch(e) {
-    t.update({ title:'Delete failed', desc:e.message, variant:'error', autoCloseMs:5000 });
+    t.update({ title:'Delete failed', desc:e.message, variant:'error', autoCloseMs:5200 });
   }
 }
 
-/** Submit new scrape + toast + polling (send client_id) */
+/** Submit new scrape + purple toast + rapid refresh + polling */
 document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const search_term = document.getElementById('search_term').value.trim();
@@ -399,7 +415,7 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
   const minDateIso = new Date().toISOString(); // accept only newer batch
   const t = showToast({
     title: 'Scraping in progress…',
-    desc: 'Fetching 5 Google Maps leads. The table will auto-refresh.',
+    desc: 'Fetching 5 Google Maps leads. The table will refresh.',
     variant: 'info',
     sticky: true
   });
@@ -412,7 +428,11 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
+    // refresh immediately to show "Active"
     await loadBatchesAndReturn();
+    // burst-refresh to make it feel instant
+    await rapidRefresh(10000, 1000);
+    // then poll until Completed
     const ok = await pollForNewBatch({
       search_term,
       location,
@@ -421,10 +441,10 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
       intervalMs: 2000,
       waitForCompleted: true
     });
-    if (ok) t.update({ title:'Scrape completed', desc:'Your batch is ready.', variant:'success', autoCloseMs: 3000 });
-    else t.update({ title:'Scrape queued', desc:'It will appear shortly. You can refresh anytime.', variant:'warn', autoCloseMs: 4500 });
+    if (ok) t.update({ title:'Scrape completed', desc:'Your batch is ready.', variant:'success', autoCloseMs: 2800 });
+    else t.update({ title:'Scrape queued', desc:'It will appear shortly. You can refresh anytime.', variant:'warn', autoCloseMs: 4200 });
   } catch(e) {
-    t.update({ title:'Scrape failed', desc:e.message, variant:'error', autoCloseMs:5000 });
+    t.update({ title:'Scrape failed', desc:e.message, variant:'error', autoCloseMs:5200 });
   }
 });
 
