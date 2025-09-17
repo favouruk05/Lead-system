@@ -32,7 +32,7 @@
   .batch-id{ font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; color:var(--muted); }
   .badge{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:700; background:var(--bg); border:1px solid var(--border); letter-spacing:.2px; }
   .badge.completed{ background:#dcfce7; color:#166534; border-color:#bbf7d0; }
-  /* Keep PROCESSING = yellow */
+  /* PROCESSING stays yellow */
   .badge.processing{ background:#fef3c7; color:#92400e; border-color:#fde68a; }
   .actions{ display:flex; gap:4px; flex-wrap:wrap; }
   .link{ color:var(--accent); text-decoration:none; font-weight:600; }
@@ -52,7 +52,7 @@
     th,td{ padding:12px; }
   }
 
-  /* Purple Toasts (top-right) — only toasts use purple */
+  /* Purple Toasts (top-right) */
   .toast-wrap{
     position: fixed; top: 16px; right: 16px; width: min(360px, 92vw);
     display: flex; flex-direction: column; gap: 10px; z-index: 9999;
@@ -224,7 +224,7 @@ function removeToast(id){
   if (el && el.parentNode) el.parentNode.removeChild(el);
 }
 
-/** Build a key to identify the latest batch by criteria */
+/** Helpers */
 function criteriaKey(search_term, location) {
   return `${(search_term||'').trim().toLowerCase()}::${(location||'').trim().toLowerCase()}`;
 }
@@ -273,51 +273,53 @@ async function loadBatchesAndReturn() {
   }
 }
 
-/** Burst refresh helper: every 3s for 20s */
-async function burstRefresh20sEvery3s() {
-  const start = Date.now();
-  const durationMs = 20000;
-  const intervalMs = 3000;
-  while (Date.now() - start < durationMs) {
-    await loadBatchesAndReturn();
-    await new Promise(r => setTimeout(r, intervalMs));
+/** Find newest batch for a (search_term, location) */
+function findNewestForCriteria(list, search_term, location) {
+  const key = criteriaKey(search_term, location);
+  let newest = null;
+  for (const b of list) {
+    const k = criteriaKey(b.search_term, b.location);
+    if (k !== key) continue;
+    if (!newest || (b.date_created||'') > (newest.date_created||'')) newest = b;
   }
+  return newest;
 }
 
-/** Poll until new batch appears & completes (after burst).
- *  minDateIso ensures we watch only new runs
+/** Stage 1: Poll until the new batch appears in "Processing" (active/process).
+ *  Returns true if found (and refreshes the table each loop).
  */
-async function pollForNewBatch({search_term, location, minDateIso=null, timeoutMs=90000, intervalMs=2000, waitForCompleted=true}) {
-  const targetKey = criteriaKey(search_term, location);
+async function pollUntilProcessing({search_term, location, minDateIso=null, timeoutMs=45000, intervalMs=2000}) {
   const start = Date.now();
-
   while (Date.now() - start < timeoutMs) {
     const list = await loadBatchesAndReturn();
-
-    // pick newest per criteria
-    const idx = new Map();
-    list.forEach(b => {
-      const key = criteriaKey(b.search_term, b.location);
-      const prev = idx.get(key);
-      if (!prev || (b.date_created||'') > (prev.date_created||'')) {
-        idx.set(key, b);
-      }
-    });
-
-    const found = idx.get(targetKey);
-    if (found) {
-      const dc = found.date_created || '';
-      const isNewEnough = !minDateIso || (dc && dc > minDateIso);
-      if (isNewEnough) {
-        if (!waitForCompleted) return true;
-        const status = (found.status || '').toLowerCase();
-        if (status.includes('complet')) return true;
-      }
+    const newest = findNewestForCriteria(list, search_term, location);
+    if (newest) {
+      const dc = newest.date_created || '';
+      const isNew = !minDateIso || (dc && dc > minDateIso);
+      const status = (newest.status || '').toLowerCase();
+      const isProcessing = status.includes('active') || status.includes('process');
+      if (isNew && isProcessing) return true;
     }
-
     await new Promise(r => setTimeout(r, intervalMs));
   }
-  return false; // Timed out
+  return false;
+}
+
+/** Stage 2: Poll until the same criteria flips to Completed. */
+async function pollUntilCompleted({search_term, location, minDateIso=null, timeoutMs=90000, intervalMs=2000}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const list = await loadBatchesAndReturn();
+    const newest = findNewestForCriteria(list, search_term, location);
+    if (newest) {
+      const dc = newest.date_created || '';
+      const isNew = !minDateIso || (dc && dc > minDateIso);
+      const status = (newest.status || '').toLowerCase();
+      if (isNew && status.includes('complet')) return true;
+    }
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return false;
 }
 
 /** Show leads for a batch */
@@ -351,13 +353,13 @@ async function showLeads(batch) {
   }
 }
 
-/** Trigger rerun by record_id (and client_id) with toast + burst refresh + polling */
+/** Re-run: two-stage polling (Processing → Completed) */
 async function rerun(b) {
   if (!confirm('Re-run scraping for this batch?')) return;
-  const minDateIso = new Date().toISOString(); // only accept newer batches
+  const minDateIso = new Date().toISOString();
   const t = showToast({
-    title: 'Re-running…',
-    desc: 'Fetching a fresh batch. The table will refresh.',
+    title: 'Re-run started…',
+    desc: 'Waiting for your scraping to enter processing…',
     variant: 'info',
     sticky: true
   });
@@ -369,23 +371,37 @@ async function rerun(b) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    // refresh immediately to show new row/status
-    await loadBatchesAndReturn();
-    // burst refresh: every 3s for 20s to capture "Active/Processing"
-    await burstRefresh20sEvery3s();
-    // then poll until Completed
-    const ok = await pollForNewBatch({
+    // Stage 1: wait until we see Processing
+    const gotProcessing = await pollUntilProcessing({
       search_term: b.search_term,
       location: b.location,
       minDateIso,
-      timeoutMs: 90000,
-      intervalMs: 2000,
-      waitForCompleted: true
+      timeoutMs: 60000,
+      intervalMs: 2000
     });
-    if (ok) t.update({ title: 'Re-run completed', desc: 'Latest batch is ready.', variant: 'success', autoCloseMs: 2800 });
-    else t.update({ title: 'Re-run queued', desc: 'It will appear shortly. You can refresh anytime.', variant: 'warn', autoCloseMs: 4200 });
+
+    if (gotProcessing) {
+      t.update({ title:'Processing…', desc:'Your scraping is currently processing.', variant:'warn', autoCloseMs: 2000 });
+    } else {
+      t.update({ title:'Still queuing…', desc:'Processing not detected yet. We’ll keep watching for completion.', variant:'warn', autoCloseMs: 2500 });
+    }
+
+    // Stage 2: then wait until Completed
+    const done = await pollUntilCompleted({
+      search_term: b.search_term,
+      location: b.location,
+      minDateIso,
+      timeoutMs: 120000,
+      intervalMs: 2000
+    });
+
+    if (done) {
+      showToast({ title:'Re-run completed', desc:'Latest batch is ready.', variant:'success', duration: 2800 });
+    } else {
+      showToast({ title:'Re-run queued', desc:'It will appear shortly. You can refresh anytime.', variant:'info', duration: 4200 });
+    }
   } catch(e) {
-    t.update({ title: 'Re-run failed', desc: e.message, variant: 'error', autoCloseMs: 5200 });
+    showToast({ title:'Re-run failed', desc:e.message, variant:'error', duration:5200 });
   }
 }
 
@@ -407,17 +423,17 @@ async function delBatch(b) {
   }
 }
 
-/** Submit new scrape + toast + burst refresh + polling */
+/** Submit new scrape: two-stage polling (Processing → Completed) */
 document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const search_term = document.getElementById('search_term').value.trim();
   const location = document.getElementById('location').value.trim();
   if (!search_term || !location) return;
 
-  const minDateIso = new Date().toISOString(); // accept only newer batch
+  const minDateIso = new Date().toISOString();
   const t = showToast({
-    title: 'Scraping in progress…',
-    desc: 'Fetching 5 Google Maps leads. The table will refresh.',
+    title: 'Scrape queued…',
+    desc: 'Waiting for your scraping to enter processing…',
     variant: 'info',
     sticky: true
   });
@@ -430,23 +446,37 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    // refresh immediately to show "Active/Processing" quickly
-    await loadBatchesAndReturn();
-    // burst refresh: every 3s for 20s
-    await burstRefresh20sEvery3s();
-    // then poll until Completed
-    const ok = await pollForNewBatch({
+    // Stage 1: wait until we see Processing
+    const gotProcessing = await pollUntilProcessing({
       search_term,
       location,
       minDateIso,
-      timeoutMs: 90000,
-      intervalMs: 2000,
-      waitForCompleted: true
+      timeoutMs: 60000,
+      intervalMs: 2000
     });
-    if (ok) t.update({ title:'Scrape completed', desc:'Your batch is ready.', variant:'success', autoCloseMs: 2800 });
-    else t.update({ title:'Scrape queued', desc:'It will appear shortly. You can refresh anytime.', variant:'warn', autoCloseMs: 4200 });
+
+    if (gotProcessing) {
+      t.update({ title:'Processing…', desc:'Your scraping is currently processing.', variant:'warn', autoCloseMs: 2000 });
+    } else {
+      t.update({ title:'Still queuing…', desc:'Processing not detected yet. We’ll keep watching for completion.', variant:'warn', autoCloseMs: 2500 });
+    }
+
+    // Stage 2: then wait until Completed
+    const done = await pollUntilCompleted({
+      search_term,
+      location,
+      minDateIso,
+      timeoutMs: 120000,
+      intervalMs: 2000
+    });
+
+    if (done) {
+      showToast({ title:'Scrape completed', desc:'Your batch is ready.', variant:'success', duration: 2800 });
+    } else {
+      showToast({ title:'Scrape queued', desc:'It will appear shortly. You can refresh anytime.', variant:'info', duration: 4200 });
+    }
   } catch(e) {
-    t.update({ title:'Scrape failed', desc:e.message, variant:'error', autoCloseMs:5200 });
+    showToast({ title:'Scrape failed', desc:e.message, variant:'error', duration:5200 });
   }
 });
 
