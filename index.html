@@ -6,7 +6,8 @@
 <title>Lead Scraper & Manager</title>
 <style>
   * { box-sizing: border-box; }
-  :root{ --accent:#7e3ace; --bg:#f7f7fb; --card:#fff; --text:#1f2330; --muted:#6b7280; --border:#e5e7eb; }
+  :root{ --accent:#7e3ace; --bg:#f7f7fb; --card:#fff; --text:#1f2330; --muted:#6b7280; --border:#e5e7eb;
+         --ok:#16a34a; --warn:#92400e; --info:#2563eb; --err:#b91c1c; }
   body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); margin:0; padding:12px; font-size:14px; line-height:1.4; }
   .wrap { max-width:100%; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
@@ -45,6 +46,38 @@
     table{ min-width:700px; font-size:14px; }
     th,td{ padding:12px; }
   }
+
+  /* Toasts (top-right) */
+  .toast-wrap{
+    position: fixed; top: 16px; right: 16px; width: min(360px, 92vw);
+    display: flex; flex-direction: column; gap: 10px; z-index: 9999;
+  }
+  .toast{
+    background: #fff; border: 1px solid var(--border); border-left-width: 6px;
+    border-radius: 10px; padding: 12px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.08);
+    display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start;
+    animation: slideIn .18s ease-out;
+  }
+  .toast.info{ border-left-color: var(--info); }
+  .toast.success{ border-left-color: var(--ok); }
+  .toast.warn{ border-left-color: var(--warn); }
+  .toast.error{ border-left-color: var(--err); }
+  .toast-title{ font-weight: 600; margin: 0; font-size: 14px; }
+  .toast-desc{ margin: 0; color: var(--muted); font-size: 13px; grid-column: 1 / span 2; }
+  .toast .close{
+    border: none; background: transparent; font-size: 18px; line-height: 1;
+    color: #444; cursor: pointer; padding: 0 4px;
+  }
+  .toast .timerbar{
+    height: 3px; background: rgba(0,0,0,.08); border-radius: 2px; overflow: hidden; grid-column: 1 / span 2;
+  }
+  .toast .timerbar > i{
+    display:block; height:100%; width: 100%;
+    background: linear-gradient(90deg, var(--accent), #9c5df0);
+    transform-origin: left; animation: shrink linear forwards;
+  }
+  @keyframes slideIn { from{ transform: translateY(-6px); opacity: 0; } to{ transform: translateY(0); opacity: 1; } }
+  @keyframes shrink { from{ transform: scaleX(1); } to{ transform: scaleX(0); } }
 </style>
 </head>
 <body>
@@ -64,7 +97,7 @@
         </div>
       </div>
       <div class="button-row">
-        <button class="btn" type="submit">Scrape 5 Leads</button>
+        <button class="btn" type="submit" id="scrapeBtn">Scrape 5 Leads</button>
         <button class="btn secondary" type="button" id="refreshBtn">Refresh</button>
       </div>
     </form>
@@ -109,6 +142,9 @@
   </div>
 </div>
 
+<!-- Toast container -->
+<div class="toast-wrap" id="toastWrap" aria-live="polite" aria-atomic="true"></div>
+
 <script>
 /** Base URL for your n8n instance */
 const BASE = 'https://n8n.autocraft.site';
@@ -146,6 +182,45 @@ async function fetchJSON(url, opts={}) {
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   try { return await res.json(); } catch { return {}; }
+}
+
+/** Toast system */
+const toastWrap = document.getElementById('toastWrap');
+let _toastIdx = 0;
+function showToast({title='Notice', desc='', variant='info', duration=4000, sticky=false}) {
+  const id = `t_${++_toastIdx}`;
+  const closeBtn = h('button', {class:'close', 'aria-label':'Close', onclick:()=>removeToast(id)}, '×');
+  const timerBar = h('div', {class:'timerbar'}, h('i', {style: !sticky ? `animation-duration:${duration}ms` : 'display:none'}));
+  const node = h('div', {class:`toast ${variant}`, id},
+    h('p', {class:'toast-title'}, title),
+    closeBtn,
+    h('p', {class:'toast-desc'}, desc),
+    timerBar
+  );
+  toastWrap.appendChild(node);
+  if (!sticky) {
+    setTimeout(()=> removeToast(id), duration);
+  }
+  return {
+    id,
+    update: ({title:title2, desc:desc2, variant:var2='success', autoCloseMs=2500}={}) => {
+      if (title2) node.querySelector('.toast-title').textContent = title2;
+      if (desc2 !== undefined) node.querySelector('.toast-desc').textContent = desc2;
+      node.className = `toast ${var2}`;
+      // reset/auto-close
+      const bar = node.querySelector('.timerbar > i');
+      bar.style.display = 'block';
+      bar.style.animation = 'none';
+      // force reflow to restart animation
+      void bar.offsetWidth;
+      bar.style.animation = `shrink ${autoCloseMs}ms linear forwards`;
+      setTimeout(()=> removeToast(id), autoCloseMs);
+    }
+  };
+}
+function removeToast(id){
+  const el = document.getElementById(id);
+  if (el && el.parentNode) el.parentNode.removeChild(el);
 }
 
 /** Build a key to identify the latest batch by criteria */
@@ -190,20 +265,22 @@ async function loadBatchesAndReturn() {
     }
     return list;
   } catch(e) {
+    const tbody = document.querySelector('#batchesTable tbody');
+    tbody.innerHTML = '';
     tbody.appendChild(h('tr',{}, h('td',{colspan:'5', class:'empty-state'}, `Error: ${e.message}`)));
     return [];
   }
 }
 
-/** Lightweight polling until new batch appears & completes */
-async function pollForNewBatch({search_term, location, timeoutMs=45000, intervalMs=15000, waitForCompleted=true}) {
+/** Poll until new batch appears & completes. minDateIso ensures we watch only new runs */
+async function pollForNewBatch({search_term, location, minDateIso=null, timeoutMs=90000, intervalMs=2000, waitForCompleted=true}) {
   const targetKey = criteriaKey(search_term, location);
   const start = Date.now();
 
   while (Date.now() - start < timeoutMs) {
     const list = await loadBatchesAndReturn();
 
-    // index newest batch per criteria
+    // pick newest per criteria
     const idx = new Map();
     list.forEach(b => {
       const key = criteriaKey(b.search_term, b.location);
@@ -215,15 +292,18 @@ async function pollForNewBatch({search_term, location, timeoutMs=45000, interval
 
     const found = idx.get(targetKey);
     if (found) {
-      if (!waitForCompleted) return true;
-      const status = (found.status || '').toLowerCase();
-      if (status.includes('complet')) return true;
-      // else keep polling until Completed
+      const dc = found.date_created || '';
+      const isNewEnough = !minDateIso || (dc && dc > minDateIso);
+      if (isNewEnough) {
+        if (!waitForCompleted) return true;
+        const status = (found.status || '').toLowerCase();
+        if (status.includes('complet')) return true;
+      }
     }
 
     await new Promise(r => setTimeout(r, intervalMs));
   }
-  return false; // Timed out (still fine; user can click Refresh)
+  return false; // Timed out
 }
 
 /** Show leads for a batch */
@@ -257,9 +337,16 @@ async function showLeads(batch) {
   }
 }
 
-/** Trigger rerun by record_id (and client_id) */
+/** Trigger rerun by record_id (and client_id) with toast + polling */
 async function rerun(b) {
   if (!confirm('Re-run scraping for this batch?')) return;
+  const minDateIso = new Date().toISOString(); // only accept newer batches
+  const t = showToast({
+    title: 'Re-running…',
+    desc: 'Fetching a fresh batch. The table will auto-refresh.',
+    variant: 'info',
+    sticky: true
+  });
   try {
     const res = await fetch(`${BASE}/webhook/rerun-scraping`, {
       method:'POST',
@@ -267,14 +354,27 @@ async function rerun(b) {
       body: JSON.stringify({ record_id: b.record_id, client_id: CLIENT_ID })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    alert('Re-run queued. It will appear in the list shortly.');
+
     await loadBatchesAndReturn();
-  } catch(e) { alert('Failed: ' + e.message); }
+    const ok = await pollForNewBatch({
+      search_term: b.search_term,
+      location: b.location,
+      minDateIso,
+      timeoutMs: 90000,
+      intervalMs: 2000,
+      waitForCompleted: true
+    });
+    if (ok) t.update({ title: 'Re-run completed', desc: 'Latest batch is ready.', variant: 'success', autoCloseMs: 3000 });
+    else t.update({ title: 'Re-run queued', desc: 'It will appear shortly. You can refresh anytime.', variant: 'warn', autoCloseMs: 4500 });
+  } catch(e) {
+    t.update({ title: 'Re-run failed', desc: e.message, variant: 'error', autoCloseMs: 5000 });
+  }
 }
 
 /** Delete a batch by batch_id (and client_id) */
 async function delBatch(b) {
   if (!confirm('Delete this batch and its leads?')) return;
+  const t = showToast({ title:'Deleting…', desc:'Removing this batch.', variant:'info', sticky:true });
   try {
     const res = await fetch(`${BASE}/webhook/delete-batch`, {
       method:'POST',
@@ -282,17 +382,27 @@ async function delBatch(b) {
       body: JSON.stringify({ batch_id: b.batch_id, client_id: CLIENT_ID })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    alert('Deleted.');
-    loadBatchesAndReturn();
-  } catch(e) { alert('Failed: ' + e.message); }
+    await loadBatchesAndReturn();
+    t.update({ title:'Deleted', desc:'The batch has been removed.', variant:'success', autoCloseMs:2500 });
+  } catch(e) {
+    t.update({ title:'Delete failed', desc:e.message, variant:'error', autoCloseMs:5000 });
+  }
 }
 
-/** Submit new scrape + start polling (send client_id) */
+/** Submit new scrape + toast + polling (send client_id) */
 document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const search_term = document.getElementById('search_term').value.trim();
   const location = document.getElementById('location').value.trim();
   if (!search_term || !location) return;
+
+  const minDateIso = new Date().toISOString(); // accept only newer batch
+  const t = showToast({
+    title: 'Scraping in progress…',
+    desc: 'Fetching 5 Google Maps leads. The table will auto-refresh.',
+    variant: 'info',
+    sticky: true
+  });
 
   try {
     const res = await fetch(`${BASE}/webhook/scrape-leads`, {
@@ -301,10 +411,20 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
       body: JSON.stringify({ search_term, location, client_id: CLIENT_ID })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
     await loadBatchesAndReturn();
-    pollForNewBatch({ search_term, location, timeoutMs:45000, intervalMs:2000, waitForCompleted:true });
+    const ok = await pollForNewBatch({
+      search_term,
+      location,
+      minDateIso,
+      timeoutMs: 90000,
+      intervalMs: 2000,
+      waitForCompleted: true
+    });
+    if (ok) t.update({ title:'Scrape completed', desc:'Your batch is ready.', variant:'success', autoCloseMs: 3000 });
+    else t.update({ title:'Scrape queued', desc:'It will appear shortly. You can refresh anytime.', variant:'warn', autoCloseMs: 4500 });
   } catch(e) {
-    alert('Failed: ' + e.message);
+    t.update({ title:'Scrape failed', desc:e.message, variant:'error', autoCloseMs:5000 });
   }
 });
 
