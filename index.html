@@ -189,7 +189,7 @@ async function fetchJSON(url, opts={}) {
   try { return await res.json(); } catch { return {}; }
 }
 
-/** Toast system (purple) */
+/** Toast system (purple) with update() supporting sticky/no-close */
 const toastWrap = document.getElementById('toastWrap');
 let _toastIdx = 0;
 function showToast({title='Notice', desc='', variant='info', duration=3500, sticky=false}) {
@@ -203,19 +203,32 @@ function showToast({title='Notice', desc='', variant='info', duration=3500, stic
     timerBar
   );
   toastWrap.appendChild(node);
-  if (!sticky) setTimeout(()=> removeToast(id), duration);
+
+  let closeTimer = null;
+  if (!sticky) closeTimer = setTimeout(()=> removeToast(id), duration);
+
   return {
     id,
-    update: ({title:title2, desc:desc2, variant:var2='success', autoCloseMs=2500}={}) => {
+    update: ({title:title2, desc:desc2, variant:var2='success', autoCloseMs=null}={}) => {
       if (title2) node.querySelector('.toast-title').textContent = title2;
       if (desc2 !== undefined) node.querySelector('.toast-desc').textContent = desc2;
       node.className = `toast ${var2}`;
       const bar = node.querySelector('.timerbar > i');
-      bar.style.display = 'block';
-      bar.style.animation = 'none';
-      void bar.offsetWidth; // restart animation
-      bar.style.animation = `shrink ${autoCloseMs}ms linear forwards`;
-      setTimeout(()=> removeToast(id), autoCloseMs);
+
+      // clear any previous close timer
+      if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+
+      if (autoCloseMs === null) {
+        // keep it sticky (no close)
+        bar.style.display = 'none';
+      } else {
+        // auto-close after N ms
+        bar.style.display = 'block';
+        bar.style.animation = 'none';
+        void bar.offsetWidth; // restart animation
+        bar.style.animation = `shrink ${autoCloseMs}ms linear forwards`;
+        closeTimer = setTimeout(()=> removeToast(id), autoCloseMs);
+      }
     }
   };
 }
@@ -223,6 +236,10 @@ function removeToast(id){
   const el = document.getElementById(id);
   if (el && el.parentNode) el.parentNode.removeChild(el);
 }
+
+/** Keep track of the current run so one toast updates through states */
+let currentRunToast = null;
+let currentRunCriteria = null; // { search_term, location, minDateIso }
 
 /** Helpers */
 function criteriaKey(search_term, location) {
@@ -285,17 +302,56 @@ function findNewestForCriteria(list, search_term, location) {
   return newest;
 }
 
-/** Single-stage poll: wait until Completed (refresh table each loop) */
-async function pollUntilCompleted({search_term, location, minDateIso=null, timeoutMs=120000, intervalMs=2000}) {
+/** Try to update the persistent toast to "Processing…" after a manual Refresh */
+function tryUpdateProcessingToast(list){
+  if (!currentRunToast || !currentRunCriteria) return;
+  const newest = findNewestForCriteria(list, currentRunCriteria.search_term, currentRunCriteria.location);
+  if (!newest) return;
+
+  const dc = newest.date_created || '';
+  const isNew = !currentRunCriteria.minDateIso || (dc && dc > currentRunCriteria.minDateIso);
+  const status = (newest.status || '').toLowerCase();
+  const isProcessing = status.includes('active') || status.includes('process');
+
+  if (isNew && isProcessing) {
+    currentRunToast.update({
+      title:'Processing…',
+      desc:'Your scraping is currently processing.',
+      variant:'warn',       // yellow left bar
+      autoCloseMs: null     // keep it open until Completed
+    });
+  }
+}
+
+/** Single-stage poll: wait until Completed (NO table refresh during wait) */
+async function pollUntilCompleted({search_term, location, minDateIso=null, timeoutMs=120000, intervalMs=2000, toastRef=null}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const list = await loadBatchesAndReturn();
-    const newest = findNewestForCriteria(list, search_term, location);
-    if (newest) {
-      const dc = newest.date_created || '';
-      const isNew = !minDateIso || (dc && dc > minDateIso);
-      const status = (newest.status || '').toLowerCase();
-      if (isNew && status.includes('complet')) return true;
+    try {
+      const data = await fetchJSON(`${BASE}/webhook/ui/batches?client_id=${encodeURIComponent(CLIENT_ID)}`);
+      const list = data.data || [];
+      const newest = findNewestForCriteria(list, search_term, location);
+      if (newest) {
+        const dc = newest.date_created || '';
+        const isNew = !minDateIso || (dc && dc > minDateIso);
+        const status = (newest.status || '').toLowerCase();
+        if (isNew && status.includes('complet')) {
+          await loadBatchesAndReturn(); // refresh once
+          if (toastRef) {
+            toastRef.update({
+              title:'Completed',
+              desc:'Your batch is ready.',
+              variant:'success',
+              autoCloseMs: 2800
+            });
+          }
+          currentRunToast = null;
+          currentRunCriteria = null;
+          return true;
+        }
+      }
+    } catch(e) {
+      console.error('pollUntilCompleted error', e);
     }
     await new Promise(r => setTimeout(r, intervalMs));
   }
@@ -333,16 +389,19 @@ async function showLeads(batch) {
   }
 }
 
-/** Re-run: show instruction toast + only Completed polling */
+/** Re-run: one persistent toast → updates to Completed */
 async function rerun(b) {
   if (!confirm('Re-run scraping for this batch?')) return;
   const minDateIso = new Date().toISOString();
-  showToast({
-    title: 'Re-run started…',
-    desc: 'Click “Refresh” to see Processing. We’ll auto-update when it completes.',
+  currentRunCriteria = { search_term: b.search_term, location: b.location, minDateIso };
+
+  currentRunToast = showToast({
+    title: 'Re-run queued…',
+    desc: 'Click “Refresh” to see Processing. This will auto-update when it completes.',
     variant: 'info',
-    duration: 6000
+    sticky: true
   });
+
   try {
     const res = await fetch(`${BASE}/webhook/rerun-scraping`, {
       method:'POST',
@@ -351,29 +410,38 @@ async function rerun(b) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    // Only poll for Completed (table refreshes each loop)
     const done = await pollUntilCompleted({
       search_term: b.search_term,
       location: b.location,
       minDateIso,
       timeoutMs: 120000,
-      intervalMs: 2000
+      intervalMs: 2000,
+      toastRef: currentRunToast
     });
 
-    if (done) {
-      showToast({ title:'Re-run completed', desc:'Latest batch is ready.', variant:'success', duration: 2800 });
-    } else {
-      showToast({ title:'Re-run queued', desc:'Completion not detected yet. You can refresh anytime.', variant:'warn', duration: 4200 });
+    if (!done && currentRunToast) {
+      currentRunToast.update({
+        title:'Still queued',
+        desc:'Completion not detected yet. You can refresh anytime.',
+        variant:'warn',
+        autoCloseMs: 4200
+      });
+      currentRunToast = null;
+      currentRunCriteria = null;
     }
   } catch(e) {
-    showToast({ title:'Re-run failed', desc:e.message, variant:'error', duration:5200 });
+    if (currentRunToast) {
+      currentRunToast.update({ title:'Re-run failed', desc:e.message, variant:'error', autoCloseMs:5200 });
+      currentRunToast = null;
+      currentRunCriteria = null;
+    }
   }
 }
 
 /** Delete a batch by batch_id (and client_id) */
 async function delBatch(b) {
   if (!confirm('Delete this batch and its leads?')) return;
-  const t = showToast({ title:'Deleting…', desc:'Removing this batch.', variant:'info', duration: 2000 });
+  const t = showToast({ title:'Deleting…', desc:'Removing this batch.', variant:'info', sticky:true });
   try {
     const res = await fetch(`${BASE}/webhook/delete-batch`, {
       method:'POST',
@@ -382,13 +450,13 @@ async function delBatch(b) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     await loadBatchesAndReturn();
-    showToast({ title:'Deleted', desc:'The batch has been removed.', variant:'success', duration:2400 });
+    t.update({ title:'Deleted', desc:'The batch has been removed.', variant:'success', autoCloseMs:2400 });
   } catch(e) {
-    showToast({ title:'Delete failed', desc:e.message, variant:'error', duration:5200 });
+    t.update({ title:'Delete failed', desc:e.message, variant:'error', autoCloseMs:5200 });
   }
 }
 
-/** Submit new scrape: show instruction toast + only Completed polling */
+/** Submit new scrape: one persistent toast → updates to Completed */
 document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const search_term = document.getElementById('search_term').value.trim();
@@ -396,11 +464,13 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
   if (!search_term || !location) return;
 
   const minDateIso = new Date().toISOString();
-  showToast({
+  currentRunCriteria = { search_term, location, minDateIso };
+
+  currentRunToast = showToast({
     title: 'Scrape queued…',
-    desc: 'Click “Refresh” to see Processing. We’ll auto-update when it completes.',
+    desc: 'Click “Refresh” to see Processing. This will auto-update when it completes.',
     variant: 'info',
-    duration: 6000
+    sticky: true
   });
 
   try {
@@ -411,27 +481,39 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    // Only poll for Completed (table refreshes each loop)
     const done = await pollUntilCompleted({
       search_term,
       location,
       minDateIso,
       timeoutMs: 120000,
-      intervalMs: 2000
+      intervalMs: 2000,
+      toastRef: currentRunToast
     });
 
-    if (done) {
-      showToast({ title:'Scrape completed', desc:'Your batch is ready.', variant:'success', duration: 2800 });
-    } else {
-      showToast({ title:'Scrape queued', desc:'Completion not detected yet. You can refresh anytime.', variant:'warn', duration: 4200 });
+    if (!done && currentRunToast) {
+      currentRunToast.update({
+        title:'Still queued',
+        desc:'Completion not detected yet. You can refresh anytime.',
+        variant:'warn',
+        autoCloseMs: 4200
+      });
+      currentRunToast = null;
+      currentRunCriteria = null;
     }
   } catch(e) {
-    showToast({ title:'Scrape failed', desc:e.message, variant:'error', duration:5200 });
+    if (currentRunToast) {
+      currentRunToast.update({ title:'Scrape failed', desc:e.message, variant:'error', autoCloseMs:5200 });
+      currentRunToast = null;
+      currentRunCriteria = null;
+    }
   }
 });
 
-/** manual refresh */
-document.getElementById('refreshBtn').addEventListener('click', loadBatchesAndReturn);
+/** manual refresh: also try to flip the toast to "Processing…" if applicable */
+document.getElementById('refreshBtn').addEventListener('click', async ()=>{
+  const list = await loadBatchesAndReturn();
+  tryUpdateProcessingToast(list);
+});
 
 /** initial render */
 loadBatchesAndReturn();
