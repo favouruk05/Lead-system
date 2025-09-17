@@ -10,7 +10,6 @@
     --accent:#7e3ace; --accent-2:#9c5df0; --accent-3:#b892ff;
     --bg:#f7f5fb; --card:#fff; --text:#1f2330; --muted:#6b7280; --border:#e5e7eb;
     --ok:#16a34a; --warn:#92400e; --err:#b91c1c;
-    --purple-soft:#f3e8ff; --purple-strong:#5b21b6;
   }
   body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); margin:0; padding:12px; font-size:14px; line-height:1.4; }
   .wrap { max-width:100%; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
@@ -33,7 +32,8 @@
   .batch-id{ font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; color:var(--muted); }
   .badge{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:700; background:var(--bg); border:1px solid var(--border); letter-spacing:.2px; }
   .badge.completed{ background:#dcfce7; color:#166534; border-color:#bbf7d0; }
-  .badge.processing{ background:var(--purple-soft); color:var(--purple-strong); border-color:#e9d5ff; }
+  /* Keep PROCESSING = yellow */
+  .badge.processing{ background:#fef3c7; color:#92400e; border-color:#fde68a; }
   .actions{ display:flex; gap:4px; flex-wrap:wrap; }
   .link{ color:var(--accent); text-decoration:none; font-weight:600; }
   .link:hover{ text-decoration:underline; }
@@ -52,7 +52,7 @@
     th,td{ padding:12px; }
   }
 
-  /* Purple Toasts (top-right) */
+  /* Purple Toasts (top-right) — only toasts use purple */
   .toast-wrap{
     position: fixed; top: 16px; right: 16px; width: min(360px, 92vw);
     display: flex; flex-direction: column; gap: 10px; z-index: 9999;
@@ -273,16 +273,18 @@ async function loadBatchesAndReturn() {
   }
 }
 
-/** Rapid refresh helper: refresh table every `intervalMs` for `durationMs` */
-async function rapidRefresh(durationMs=10000, intervalMs=1000) {
+/** Burst refresh helper: every 3s for 20s */
+async function burstRefresh20sEvery3s() {
   const start = Date.now();
+  const durationMs = 20000;
+  const intervalMs = 3000;
   while (Date.now() - start < durationMs) {
     await loadBatchesAndReturn();
     await new Promise(r => setTimeout(r, intervalMs));
   }
 }
 
-/** Poll until new batch appears & completes (after rapid refresh).
+/** Poll until new batch appears & completes (after burst).
  *  minDateIso ensures we watch only new runs
  */
 async function pollForNewBatch({search_term, location, minDateIso=null, timeoutMs=90000, intervalMs=2000, waitForCompleted=true}) {
@@ -349,7 +351,7 @@ async function showLeads(batch) {
   }
 }
 
-/** Trigger rerun by record_id (and client_id) with purple toast + rapid refresh + polling */
+/** Trigger rerun by record_id (and client_id) with toast + burst refresh + polling */
 async function rerun(b) {
   if (!confirm('Re-run scraping for this batch?')) return;
   const minDateIso = new Date().toISOString(); // only accept newer batches
@@ -367,10 +369,10 @@ async function rerun(b) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    // instant refresh (to show "Active/Processing" row ASAP)
+    // refresh immediately to show new row/status
     await loadBatchesAndReturn();
-    // rapid refresh for first 10s to make it feel instant
-    await rapidRefresh(10000, 1000);
+    // burst refresh: every 3s for 20s to capture "Active/Processing"
+    await burstRefresh20sEvery3s();
     // then poll until Completed
     const ok = await pollForNewBatch({
       search_term: b.search_term,
@@ -405,7 +407,7 @@ async function delBatch(b) {
   }
 }
 
-/** Submit new scrape + purple toast + rapid refresh + polling */
+/** Submit new scrape + toast + burst refresh + polling */
 document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const search_term = document.getElementById('search_term').value.trim();
@@ -428,10 +430,10 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    // refresh immediately to show "Active"
+    // refresh immediately to show "Active/Processing" quickly
     await loadBatchesAndReturn();
-    // burst-refresh to make it feel instant
-    await rapidRefresh(10000, 1000);
+    // burst refresh: every 3s for 20s
+    await burstRefresh20sEvery3s();
     // then poll until Completed
     const ok = await pollForNewBatch({
       search_term,
