@@ -196,7 +196,7 @@ async function loadBatchesAndReturn() {
 }
 
 /** Lightweight polling until new batch appears & completes */
-async function pollForNewBatch({search_term, location, timeoutMs=45000, intervalMs=2000, waitForCompleted=true}) {
+async function pollForNewBatch({search_term, location, timeoutMs=45000, intervalMs=15000, waitForCompleted=true}) {
   const targetKey = criteriaKey(search_term, location);
   const start = Date.now();
 
