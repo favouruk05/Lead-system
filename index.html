@@ -151,10 +151,10 @@
 <div class="toast-wrap" id="toastWrap" aria-live="polite" aria-atomic="true"></div>
 
 <script>
-/** ====== CONFIG ====== */
+/** ================== CONFIG ================== */
 const BASE = 'https://n8n.autocraft.site';
 
-/** ====== CLIENT ID (per-browser isolation) ====== */
+/** ================== CLIENT ID (per-browser isolation) ================== */
 function getClientId(){
   let id = localStorage.getItem('client_id');
   if (!id) {
@@ -166,7 +166,7 @@ function getClientId(){
 }
 const CLIENT_ID = getClientId();
 
-/** ====== Tiny DOM helper ====== */
+/** ================== Tiny DOM helper ================== */
 const h = (tag, attrs={}, ...kids) => {
   const el = document.createElement(tag);
   Object.entries(attrs||{}).forEach(([k,v])=>{
@@ -182,7 +182,7 @@ const h = (tag, attrs={}, ...kids) => {
   return el;
 };
 
-/** ====== Fetch helpers ====== */
+/** ================== Fetch helpers ================== */
 async function fetchJSON(url, opts={}) {
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -202,7 +202,7 @@ async function postBestEffort(url, payload) {
   }
 }
 
-/** ====== Toast (top-right) ====== */
+/** ================== Toast (top-right, spinner, purple accent) ================== */
 (function ensureToastStyles(){
   if (document.getElementById('toast-styles')) return;
   const css = `
@@ -210,14 +210,17 @@ async function postBestEffort(url, payload) {
   .toast{min-width:260px;max-width:360px;background:#fff;border:1px solid #e5e7eb;border-left-width:6px;border-radius:10px;
          box-shadow:0 10px 25px rgba(0,0,0,.08);padding:12px 12px 12px 10px;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
   .toast .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-  .toast .title{font-weight:700;font-size:14px;color:#1f2330}
+  .toast .title{font-weight:700;font-size:14px;color:#1f2330;display:flex;align-items:center;gap:8px}
   .toast .x{border:none;background:transparent;font-size:16px;cursor:pointer;opacity:.6}
   .toast .x:hover{opacity:1}
   .toast .desc{font-size:13px;color:#4b5563;line-height:1.35}
   .toast.info{border-left-color:#7e3ace}
   .toast.success{border-left-color:#16a34a}
   .toast.warn{border-left-color:#f59e0b}
-  .toast.error{border-left-color:#ef4444}`;
+  .toast.error{border-left-color:#ef4444}
+  /* spinner */
+  .spin{width:14px;height:14px;display:inline-block;border-radius:999px;border:2px solid #d1d5db;border-top-color:#7e3ace;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}`;
   const s = document.createElement('style'); s.id='toast-styles'; s.textContent = css; document.head.appendChild(s);
 })();
 function getToastHost(){
@@ -225,7 +228,7 @@ function getToastHost(){
   if (!host){ host = document.createElement('div'); host.className='toast-wrap'; document.body.appendChild(host); }
   return host;
 }
-function showToast({title, desc, variant='info', autoCloseMs=null}){
+function showToast({title, desc, variant='info', loading=false, autoCloseMs=null}){
   const host = getToastHost();
   const el = document.createElement('div');
   el.className = `toast ${variant}`;
@@ -235,25 +238,39 @@ function showToast({title, desc, variant='info', autoCloseMs=null}){
       <button class="x" aria-label="Close">&times;</button>
     </div>
     <div class="desc"></div>`;
-  el.querySelector('.title').textContent = title || '';
+  const ttl = el.querySelector('.title');
+  if (loading) {
+    const sp = document.createElement('span'); sp.className='spin';
+    ttl.appendChild(sp);
+  }
+  const setTitle = (t)=>{ ttl.childNodes.forEach(n=>{ if(n.nodeType===3) ttl.removeChild(n); }); ttl.appendChild(document.createTextNode(t)); if (loading) ttl.insertBefore(ttl.querySelector('.spin'), ttl.firstChild); };
+  setTitle(title || '');
   el.querySelector('.desc').textContent = desc || '';
   let timer = null;
   function close(){ if (timer) clearTimeout(timer); el.remove(); }
   el.querySelector('.x').addEventListener('click', close);
   host.appendChild(el);
-  if (autoCloseMs) timer = setTimeout(close, autoCloseMs);
   return {
     el, close,
-    update({title, desc, variant, autoCloseMs}){
-      if (title != null) el.querySelector('.title').textContent = title;
-      if (desc  != null) el.querySelector('.desc').textContent  = desc;
+    update({title, desc, variant, loading:ld, autoCloseMs}){
+      if (title != null) setTitle(title);
+      if (desc  != null) el.querySelector('.desc').textContent = desc;
       if (variant){ el.className = `toast ${variant}`; }
-      if (autoCloseMs != null){ if (timer) clearTimeout(timer); if (autoCloseMs) timer = setTimeout(()=>this.close(), autoCloseMs); }
+      if (ld != null){
+        const has = !!el.querySelector('.spin');
+        if (ld && !has){ const sp = document.createElement('span'); sp.className='spin'; ttl.insertBefore(sp, ttl.firstChild); }
+        if (!ld && has){ el.querySelector('.spin').remove(); }
+      }
+      if (autoCloseMs != null){
+        if (timer) clearTimeout(timer);
+        if (autoCloseMs) timer = setTimeout(()=>this.close(), autoCloseMs);
+      }
     }
   };
 }
 
-/** ====== Batches table render ====== */
+/** ================== Batches table ================== */
+/* Render table (used for manual refresh + the two controlled refreshes) */
 async function loadBatchesAndRender() {
   const tbody = document.querySelector('#batchesTable tbody');
   tbody.innerHTML = '';
@@ -289,8 +306,15 @@ async function loadBatchesAndRender() {
     return [];
   }
 }
+/* Fetch batches silently without re-rendering table */
+async function fetchBatchesOnly() {
+  try {
+    const data = await fetchJSON(`${BASE}/webhook/ui/batches?client_id=${encodeURIComponent(CLIENT_ID)}`);
+    return data?.data || [];
+  } catch { return []; }
+}
 
-/** ====== Leads view ====== */
+/** ================== Leads view ================== */
 async function showLeads(batch) {
   const leadsCard = document.getElementById('leadsCard');
   const title = document.getElementById('batchTitle');
@@ -320,7 +344,7 @@ async function showLeads(batch) {
   }
 }
 
-/** ====== Delete & Re-run ====== */
+/** ================== Delete & Re-run ================== */
 async function delBatch(b) {
   if (!confirm('Delete this batch and its leads?')) return;
   try {
@@ -334,16 +358,23 @@ async function delBatch(b) {
   } catch(e) { showToast({ title:'Delete failed', desc:e.message, variant:'error', autoCloseMs:4200 }); }
 }
 
-/** ====== Run Watcher: auto-detect Processing then Completed, keep running even if toast closed ====== */
+/** ================== Silent Run Watcher ==================
+ * - Polls silently (no table render).
+ * - Refreshes the table EXACTLY TWICE: first time we detect Processing, and first time we detect Completed.
+ * - Toast updates: Queued -> Processing (spinner) -> Completed.
+ * - If the toast is closed manually, it will reappear on Completed.
+ */
 class RunWatcher {
   constructor({ batchId=null, search_term, location, minDateIso }) {
     this.batchId = batchId;
     this.search_term = (search_term||'').trim().toLowerCase();
     this.location = (location||'').trim().toLowerCase();
     this.minDateIso = minDateIso || new Date(0).toISOString();
-    this.phase = 'waiting'; // waiting -> processing -> completed
+    this.phase = 'queued'; // queued -> processing -> completed
     this.stopped = false;
     this.toast = null;
+    this.didRefreshOnProcessing = false;
+    this.didRefreshOnCompleted  = false;
   }
   statusStr(s=''){ const t = s.toLowerCase(); return t.includes('complet') ? 'completed'
                                   : (t.includes('process') || t.includes('active') || t.includes('pending')) ? 'processing'
@@ -357,43 +388,65 @@ class RunWatcher {
     const okTime = !b.date_created || b.date_created >= this.minDateIso;
     return okCrit && okTime;
   }
-  async start({intervalMs=3000, maxMs=240000} = {}) {
+  async start({intervalMs=2000, maxMs=240000} = {}) {
     const start = Date.now();
-    // initial toast
+    // Initial toast
     this.toast = showToast({
-      title:'Queued…', desc:'Watching for Processing and Completion.', variant:'info', autoCloseMs:null
+      title:'Queued…', desc:'Watching for Processing and Completion.', variant:'info', loading:true, autoCloseMs:null
     });
+
     while (!this.stopped && (Date.now()-start) < maxMs) {
-      const list = await loadBatchesAndRender(); // also updates table in background
-      // pick newest match
+      const list = await fetchBatchesOnly(); // SILENT: no table re-render
+      // find newest candidate that matches
       let candidate = null;
       for (const b of list) if (this.matchBatch(b)) {
         if (!candidate || (b.date_created||'') > (candidate.date_created||'')) candidate = b;
       }
+
       if (candidate) {
         const st = this.statusStr(candidate.status||'');
-        if (st === 'processing' && this.phase === 'waiting') {
+
+        // -> First time we see Processing
+        if (st === 'processing' && this.phase === 'queued') {
           this.phase = 'processing';
-          if (this.toast) this.toast.update({ title:'Processing…', desc:'Scrape is running. We’ll notify when it completes.', variant:'warn', autoCloseMs:null });
+          // Update toast (spinner stays)
+          if (this.toast) this.toast.update({
+            title:'Processing…', desc:'Scrape is running. We’ll notify when it completes.', variant:'warn', loading:true, autoCloseMs:null
+          });
+          // Refresh table ONCE to show the Processing row
+          if (!this.didRefreshOnProcessing) {
+            await loadBatchesAndRender();
+            this.didRefreshOnProcessing = true;
+          }
         }
+
+        // -> First time we see Completed
         if (st === 'completed' && this.phase !== 'completed') {
           this.phase = 'completed';
-          // even if user closed earlier toast, spawn a new one
-          if (!this.toast) this.toast = showToast({ title:'Completed 🎉', desc:'Batch is ready. You can View the leads now.', variant:'success', autoCloseMs:4500 });
-          else this.toast.update({ title:'Completed 🎉', desc:'Batch is ready. You can View the leads now.', variant:'success', autoCloseMs:4500 });
+          // Ensure a toast is visible even if user closed it earlier
+          if (!this.toast) this.toast = showToast({ title:'Completed 🎉', desc:'Batch is ready. You can View the leads now.', variant:'success', loading:false, autoCloseMs:4500 });
+          else this.toast.update({ title:'Completed 🎉', desc:'Batch is ready. You can View the leads now.', variant:'success', loading:false, autoCloseMs:4500 });
+          // Refresh table ONCE to show Completed
+          if (!this.didRefreshOnCompleted) {
+            await loadBatchesAndRender();
+            this.didRefreshOnCompleted = true;
+          }
           return true;
         }
       }
       await new Promise(r=>setTimeout(r, intervalMs));
     }
-    // timeout fallback
-    if (this.toast) this.toast.update({ title:'Still queued', desc:'You can click Refresh any time. We’ll keep watching next run.', variant:'warn', autoCloseMs:4000 });
+
+    // Timeout fallback copy
+    if (this.toast) this.toast.update({
+      title:'Still queued', desc:'You can click Refresh any time. We’ll keep watching next run.', variant:'warn', loading:false, autoCloseMs:4000
+    });
     return false;
   }
-  stop(){ this.stopped = true; if (this.toast) { /* leave it; user may close */ } }
+  stop(){ this.stopped = true; /* leave toast as-is */ }
 }
 
-/** ====== Submit / Rerun: start watcher ====== */
+/** ================== Submit / Re-run ================== */
 document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const search_term = document.getElementById('search_term').value.trim();
@@ -401,13 +454,12 @@ document.getElementById('scrapeForm').addEventListener('submit', async (e)=>{
   if (!search_term || !location) return;
 
   const minDateIso = new Date().toISOString();
-  // fire and forget the request (you said your Respond to Webhook is right after setting Processing)
   const r = await postBestEffort(`${BASE}/webhook/scrape-leads`, { search_term, location, client_id: CLIENT_ID });
-
-  // capture returned batch_id if present
   const batchId = (r && r.body && r.body.batch_id) ? r.body.batch_id : null;
+
+  // Start silent watcher (no table spam; exactly two refreshes)
   const watcher = new RunWatcher({ batchId, search_term, location, minDateIso });
-  watcher.start(); // no await; runs in background
+  watcher.start(); // runs in background
 });
 
 async function rerun(b) {
@@ -415,14 +467,13 @@ async function rerun(b) {
   const minDateIso = new Date().toISOString();
   const r = await postBestEffort(`${BASE}/webhook/rerun-scraping`, { record_id: b.record_id, client_id: CLIENT_ID });
   const batchId = (r && r.body && r.body.batch_id) ? r.body.batch_id : null;
+
   const watcher = new RunWatcher({ batchId, search_term: b.search_term, location: b.location, minDateIso });
   watcher.start();
 }
 
-/** ====== Manual refresh button ====== */
+/** ================== Manual refresh button + initial render ================== */
 document.getElementById('refreshBtn').addEventListener('click', loadBatchesAndRender);
-
-/** ====== Initial render ====== */
 loadBatchesAndRender();
 </script>
 </body>
