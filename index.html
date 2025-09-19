@@ -39,6 +39,59 @@
   .link:hover{ text-decoration:underline; }
   .empty-state{ text-align:center; padding:32px 16px; color:var(--muted); }
 
+  /* Enhanced contact cell styles */
+  .contact-cell{ 
+    display:flex; 
+    flex-direction:column; 
+    gap:4px; 
+    min-width:140px;
+  }
+  .phone-number{ 
+    font-weight:600; 
+    color:var(--text); 
+  }
+  .email-address{ 
+    font-size:12px; 
+    color:var(--muted); 
+    font-style:italic;
+  }
+
+  /* Social links styles */
+  .socials-cell{
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    min-width:120px;
+  }
+  .social-link{
+    display:inline-flex;
+    align-items:center;
+    gap:4px;
+    padding:2px 6px;
+    background:var(--bg);
+    border:1px solid var(--border);
+    border-radius:6px;
+    text-decoration:none;
+    font-size:11px;
+    font-weight:600;
+    color:var(--text);
+    transition:all .15s;
+  }
+  .social-link:hover{
+    background:var(--accent);
+    color:white;
+    border-color:var(--accent);
+  }
+  .social-icon{
+    width:12px;
+    height:12px;
+    border-radius:2px;
+  }
+  .social-linkedin{ background:#0077b5; }
+  .social-facebook{ background:#1877f2; }
+  .social-twitter{ background:#1da1f2; }
+  .social-instagram{ background:#e4405f; }
+
   @media (min-width:768px){
     body{ padding:24px; font-size:14px; }
     .wrap{ max-width:1200px; margin:0 auto; gap:24px; }
@@ -157,6 +210,7 @@
             <th>Rating</th>
             <th>Reviews</th>
             <th>Address</th>
+            <th id="socialsHeader" style="display:none;">Socials</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -200,17 +254,31 @@ const h = (tag, attrs={}, ...kids) => {
   return el;
 };
 
-/** ================== Fetch helpers ================== */
+/** ================== Fetch helpers with 304 prevention ================== */
 async function fetchJSON(url, opts={}) {
-  const res = await fetch(url, opts);
+  const finalUrl = url.includes('?') ? `${url}&_t=${Date.now()}` : `${url}?_t=${Date.now()}`;
+  const res = await fetch(finalUrl, {
+    ...opts,
+    headers: {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      ...(opts.headers || {})
+    }
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   try { return await res.json(); } catch { return {}; }
 }
+
 async function postBestEffort(url, payload) {
   try {
     const res = await fetch(url, {
       method:'POST',
-      headers:{'Content-Type':'application/json','Cache-Control':'no-store'},
+      headers:{
+        'Content-Type':'application/json',
+        'Cache-Control':'no-store',
+        'Pragma': 'no-cache'
+      },
       body: JSON.stringify(payload),
     });
     let body=null; try { body = await res.json(); } catch {}
@@ -287,6 +355,41 @@ function showToast({title, desc, variant='info', loading=false, autoCloseMs=null
   };
 }
 
+/** ================== Helper functions for contact and socials ================== */
+function createSocialLink(platform, url) {
+  const platformNames = {
+    linkedin:'LinkedIn', facebook:'Facebook', twitter:'Twitter', instagram:'Instagram'
+  };
+  return h('a', { href:url, target:'_blank', class:'social-link' },
+    h('span', { class:social-icon social-${platform} }),
+    platformNames[platform] || platform
+  );
+}
+
+function createContactCell(phone, email) {
+  const wrap = h('div', { class:'contact-cell' });
+  const ph   = (phone && phone !== '—') ? phone : '—';
+  wrap.appendChild(h('div', { class:'phone-number' }, ph));
+  if (email && email.includes('@')) {
+    wrap.appendChild(h('div', { class:'email-address' }, email));
+  }
+  return wrap;
+}
+
+function createSocialsCell(socials) {
+  const box = h('div', { class:'socials-cell' });
+  let any = false;
+  (['linkedin','facebook','instagram','twitter']).forEach(p=>{
+    const url = socials?.[p];
+    if (url && /^https?:\/\//i.test(url)) {
+      box.appendChild(createSocialLink(p, url));
+      any = true;
+    }
+  });
+  if (!any) box.appendChild(h('span', { style:'color:var(--muted);font-size:12px;' }, '—'));
+  return box;
+}
+
 /** ================== Batches table ================== */
 /* Render table (used for manual refresh + the two controlled refreshes) */
 async function loadBatchesAndRender() {
@@ -334,31 +437,48 @@ async function fetchBatchesOnly() {
 
 /** ================== Leads view ================== */
 async function showLeads(batch) {
-  const leadsCard = document.getElementById('leadsCard');
-  const title = document.getElementById('batchTitle');
-  title.textContent = batch.batch_id || '';
-  const tbody = document.querySelector('#leadsTable tbody');
-  tbody.innerHTML = '';
+  const leadsCard     = document.getElementById('leadsCard');
+  const title         = document.getElementById('batchTitle');
+  const socialsHeader = document.getElementById('socialsHeader');
+  title.textContent   = batch.batch_id || '';
+  const tbody         = document.querySelector('#leadsTable tbody');
+  tbody.innerHTML     = '';
   leadsCard.style.display = 'block';
+
+  // hide socials column by default
+  socialsHeader.style.display = 'none';
+
   try {
-    const url = `${BASE}/webhook/ui/leads?batch_id=${encodeURIComponent(batch.batch_id)}&client_id=${encodeURIComponent(CLIENT_ID)}`;
-    const data = await fetchJSON(url);
-    const rows = data.data || [];
-    rows.forEach(l => {
-      tbody.appendChild(h('tr',{},
-        h('td',{}, l.name || 'N/A'),
-        h('td',{}, l.phone || '—'),
-        h('td',{}, l.website ? h('a',{href:l.website,target:'_blank',class:'link'}, 'Website') : '—'),
-        h('td',{}, (l.rating || l.rating === 0) ? `★ ${l.rating}` : '—'),
-        h('td',{}, (l.reviews || l.reviews === 0) ? String(l.reviews) : '—'),
-        h('td',{}, l.address || '—')
-      ));
+    const url  = ${BASE}/webhook/ui/leads?batch_id=${encodeURIComponent(batch.batch_id)}&client_id=${encodeURIComponent(CLIENT_ID)};
+    const resp = await fetchJSON(url);
+    const rows = Array.isArray(resp?.data) ? resp.data : [];
+
+    // should we show socials column at all?
+    const hasAnySocials = rows.some(r => {
+      const s = r.socials || {};
+      return ['linkedin','facebook','instagram','twitter'].some(k => s[k] && /^https?:\/\//i.test(s[k]));
     });
+    if (hasAnySocials) socialsHeader.style.display = 'table-cell';
+
+    rows.forEach(l => {
+      const tr = document.createElement('tr');
+      tr.appendChild(h('td', {}, l.name || 'N/A'));
+      tr.appendChild(h('td', {}, createContactCell(l.phone, l.email)));
+      tr.appendChild(h('td', {}, l.website ? h('a', { href:l.website, target:'_blank', class:'link' }, 'Website') : '—'));
+      tr.appendChild(h('td', {}, (l.rating || l.rating === 0) ? ★ ${l.rating} : '—'));
+      tr.appendChild(h('td', {}, (l.reviews || l.reviews === 0) ? String(l.reviews) : '—'));
+      tr.appendChild(h('td', {}, l.address || '—'));
+      if (hasAnySocials) tr.appendChild(h('td', {}, createSocialsCell(l.socials)));
+      tbody.appendChild(tr);
+    });
+
     if (rows.length === 0) {
-      tbody.appendChild(h('tr',{}, h('td',{colspan:'6',class:'empty-state'}, 'No leads found')));
+      const colspan = hasAnySocials ? 7 : 6;
+      tbody.appendChild(h('tr', {}, h('td', { colspan:String(colspan), class:'empty-state' }, 'No leads found')));
     }
-  } catch(e) {
-    tbody.appendChild(h('tr',{}, h('td',{colspan:'6',class:'empty-state'}, `Error: ${e.message}`)));
+  } catch (e) {
+    const colspan = (socialsHeader.style.display === 'table-cell') ? 7 : 6;
+    tbody.appendChild(h('tr', {}, h('td', { colspan:String(colspan), class:'empty-state' }, Error: ${e.message})));
   }
 }
 
@@ -367,13 +487,19 @@ async function delBatch(b) {
   if (!confirm('Delete this batch and its leads?')) return;
   try {
     const res = await fetch(`${BASE}/webhook/delete-batch`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
+      method:'POST', 
+      headers:{
+        'Content-Type':'application/json',
+        'Cache-Control':'no-store'
+      },
       body: JSON.stringify({ batch_id: b.batch_id, client_id: CLIENT_ID })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    showToast({ title:'Deleted', desc:'Batch removed.', variant:'success', autoCloseMs:2200 });
+    showToast({ title:'Deleted', desc:'Batch removed successfully.', variant:'success', autoCloseMs:3000 });
     loadBatchesAndRender();
-  } catch(e) { showToast({ title:'Delete failed', desc:e.message, variant:'error', autoCloseMs:4200 }); }
+  } catch(e) { 
+    showToast({ title:'Delete failed', desc:e.message, variant:'error', autoCloseMs:5000 }); 
+  }
 }
 
 /** ================== Silent Run Watcher ==================
