@@ -201,11 +201,29 @@ const h = (tag, attrs={}, ...kids) => {
 };
 
 /** ================== Fetch helpers ================== */
-async function fetchJSON(url, opts={}) {
-  const res = await fetch(url, opts);
+async function fetchJSON(url, opts = {}) {
+  // add cache-buster to avoid 304 with empty body
+  const sep = url.includes('?') ? '&' : '?';
+  const finalUrl = `${url}${sep}_=${Date.now()}`;
+
+  const baseOpts = {
+    cache: 'no-store',
+    headers: { 'Cache-Control': 'no-store', 'Pragma': 'no-cache', ...(opts.headers || {}) },
+    ...opts,
+  };
+
+  let res = await fetch(finalUrl, baseOpts);
+
+  // If server still returns 304, retry once with a new buster
+  if (res.status === 304) {
+    res = await fetch(`${url}${sep}_=${Date.now()+1}`, baseOpts);
+  }
+
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
   try { return await res.json(); } catch { return {}; }
 }
+
 async function postBestEffort(url, payload) {
   try {
     const res = await fetch(url, {
@@ -332,78 +350,122 @@ async function fetchBatchesOnly() {
   } catch { return []; }
 }
 
- /** ================== Leads view ================== */
- async function showLeads(batch) {
+/** ================== Leads view ================== */
+// helper: render social chips under Website
+function socialChips(socials = {}) {
+  const wrap = document.createElement('div');
+  wrap.style.display = 'flex';
+  wrap.style.flexWrap = 'wrap';
+  wrap.style.gap = '6px';
+  wrap.style.marginTop = '6px';
+
+  const add = (label, url) => {
+    if (!url) return;
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = label;
+    a.className = 'link';
+    a.style.fontSize = '12px';
+    a.style.padding = '2px 6px';
+    a.style.border = '1px solid var(--border)';
+    a.style.borderRadius = '999px';
+    wrap.appendChild(a);
+  };
+
+  add('LinkedIn', socials.linkedin);
+  add('Twitter',  socials.twitter);
+  add('Facebook', socials.facebook);
+  add('Instagram',socials.instagram);
+
+  return wrap.childNodes.length ? wrap : '';
+}
+
+async function showLeads(batch) {
   const leadsCard = document.getElementById('leadsCard');
   const title = document.getElementById('batchTitle');
-  title.textContent = batch.batch_id || '';
   const tbody = document.querySelector('#leadsTable tbody');
-  const thead = document.querySelector('#leadsTable thead');
+
+  title.textContent = batch.batch_id || '';
   tbody.innerHTML = '';
   leadsCard.style.display = 'block';
 
   try {
     const url = `${BASE}/webhook/ui/leads?batch_id=${encodeURIComponent(batch.batch_id)}&client_id=${encodeURIComponent(CLIENT_ID)}`;
-    const resp = await fetchJSON(url);
-    const rows = resp.data || [];
+    const data = await fetchJSON(url);
 
-    // Detect if any row has email/socials
-    const hasEmail   = rows.some(r => (r.email || '').trim() !== '');
-    const hasSocials = rows.some(r => {
-      const s = r.socials || {};
-      return !!(s.linkedin || s.facebook || s.instagram || s.twitter);
-    });
+    // normalize to array
+    let rows = [];
+    if (Array.isArray(data)) rows = data;
+    else if (Array.isArray(data?.data)) rows = data.data;
+    else if (data?.data && typeof data.data === 'object') rows = [data.data];
+    else if (data && typeof data === 'object' && (data.id || data.name)) rows = [data];
 
-    // Build header dynamically
-    const baseHeads = ['Name','Phone','Website','Rating','Reviews','Address'];
-    const extraHeads = [];
-    if (hasEmail) extraHeads.push('Email');
-    if (hasSocials) extraHeads.push('Socials');
-
-    const allHeads = baseHeads.slice(0, 3)  // Name, Phone, Website
-      .concat(hasEmail ? ['Email'] : [])
-      .concat(hasSocials ? ['Socials'] : [])
-      .concat(baseHeads.slice(3));         // Rating, Reviews, Address
-
-    thead.innerHTML = `<tr>${allHeads.map(h => `<th>${h}</th>`).join('')}</tr>`;
-
-    // Row renderer helpers
-    const link = (href, text='Link') => href ? `<a class="link" target="_blank" rel="noopener" href="${href}">${text}</a>` : '—';
-    const socialsCell = (s={}) => {
-      const chips = [];
-      if (s.linkedin)  chips.push(link(s.linkedin,  'LinkedIn'));
-      if (s.facebook)  chips.push(link(s.facebook,  'Facebook'));
-      if (s.instagram) chips.push(link(s.instagram, 'Instagram'));
-      if (s.twitter)   chips.push(link(s.twitter,   'Twitter'));
-      return chips.length ? chips.join(' · ') : '—';
-    };
-
-    // Render rows
     rows.forEach(l => {
-      const cells = [];
-      cells.push(`<td>${l.name || 'N/A'}</td>`);
-      cells.push(`<td>${l.phone || '—'}</td>`);
-      cells.push(`<td>${l.website ? link(l.website, 'Website') : '—'}</td>`);
-      if (hasEmail)   cells.push(`<td>${(l.email || '').trim() || '—'}</td>`);
-      if (hasSocials) cells.push(`<td>${socialsCell(l.socials)}</td>`);
-      cells.push(`<td>${(l.rating || l.rating === 0) ? `★ ${l.rating}` : '—'}</td>`);
-      cells.push(`<td>${(l.reviews || l.reviews === 0) ? String(l.reviews) : '—'}</td>`);
-      cells.push(`<td>${l.address || '—'}</td>`);
       const tr = document.createElement('tr');
-      tr.innerHTML = cells.join('');
+
+      // Name
+      const tdName = document.createElement('td');
+      tdName.textContent = l.name || 'N/A';
+
+      // Phone (always) + Email (if present) beneath
+      const tdPhone = document.createElement('td');
+      tdPhone.textContent = l.phone || '—';
+      if (l.email && typeof l.email === 'string' && l.email.includes('@')) {
+        const br = document.createElement('br');
+        const em = document.createElement('a');
+        em.href = `mailto:${l.email}`;
+        em.textContent = l.email;
+        em.className = 'link';
+        em.style.fontSize = '12px';
+        em.style.opacity = '0.9';
+        tdPhone.appendChild(br);
+        tdPhone.appendChild(em);
+      }
+
+      // Website + socials chips below
+      const tdWeb = document.createElement('td');
+      if (l.website) {
+        const a = document.createElement('a');
+        a.href = l.website;
+        a.target = '_blank';
+        a.className = 'link';
+        a.textContent = 'Website';
+        tdWeb.appendChild(a);
+      } else {
+        tdWeb.textContent = '—';
+      }
+      const chips = socialChips(l.socials || {});
+      if (chips) tdWeb.appendChild(chips);
+
+      // Rating
+      const tdRating = document.createElement('td');
+      tdRating.textContent = (l.rating || l.rating === 0) ? `★ ${l.rating}` : '—';
+
+      // Reviews
+      const tdReviews = document.createElement('td');
+      tdReviews.textContent = (l.reviews || l.reviews === 0) ? String(l.reviews) : '—';
+
+      // Address
+      const tdAddr = document.createElement('td');
+      tdAddr.textContent = l.address || '—';
+
+      tr.appendChild(tdName);
+      tr.appendChild(tdPhone);   // ✅ phone always visible
+      tr.appendChild(tdWeb);     // website + socials (if any)
+      tr.appendChild(tdRating);
+      tr.appendChild(tdReviews);
+      tr.appendChild(tdAddr);
+
       tbody.appendChild(tr);
     });
 
     if (rows.length === 0) {
-      tbody.appendChild(
-        h('tr',{}, h('td',{colspan:String(allHeads.length), class:'empty-state'}, 'No leads found'))
-      );
+      tbody.appendChild(h('tr',{}, h('td',{colspan:'6',class:'empty-state'}, 'No leads found')));
     }
   } catch(e) {
-    const theadCols = document.querySelectorAll('#leadsTable thead th').length || 6;
-    tbody.appendChild(
-      h('tr',{}, h('td',{colspan:String(theadCols), class:'empty-state'}, `Error: ${e.message}`))
-    );
+    tbody.appendChild(h('tr',{}, h('td',{colspan:'6',class:'empty-state'}, `Error: ${e.message}`)));
   }
 }
  
