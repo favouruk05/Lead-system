@@ -39,59 +39,6 @@
   .link:hover{ text-decoration:underline; }
   .empty-state{ text-align:center; padding:32px 16px; color:var(--muted); }
 
-  /* Enhanced contact cell styles */
-  .contact-cell{ 
-    display:flex; 
-    flex-direction:column; 
-    gap:4px; 
-    min-width:140px;
-  }
-  .phone-number{ 
-    font-weight:600; 
-    color:var(--text); 
-  }
-  .email-address{ 
-    font-size:12px; 
-    color:var(--muted); 
-    font-style:italic;
-  }
-
-  /* Social links styles */
-  .socials-cell{
-    display:flex;
-    flex-wrap:wrap;
-    gap:6px;
-    min-width:120px;
-  }
-  .social-link{
-    display:inline-flex;
-    align-items:center;
-    gap:4px;
-    padding:2px 6px;
-    background:var(--bg);
-    border:1px solid var(--border);
-    border-radius:6px;
-    text-decoration:none;
-    font-size:11px;
-    font-weight:600;
-    color:var(--text);
-    transition:all .15s;
-  }
-  .social-link:hover{
-    background:var(--accent);
-    color:white;
-    border-color:var(--accent);
-  }
-  .social-icon{
-    width:12px;
-    height:12px;
-    border-radius:2px;
-  }
-  .social-linkedin{ background:#0077b5; }
-  .social-facebook{ background:#1877f2; }
-  .social-twitter{ background:#1da1f2; }
-  .social-instagram{ background:#e4405f; }
-
   @media (min-width:768px){
     body{ padding:24px; font-size:14px; }
     .wrap{ max-width:1200px; margin:0 auto; gap:24px; }
@@ -101,7 +48,7 @@
     input[type=text]{ font-size:14px; padding:10px 12px; }
     .form-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
     .btn{ flex:none; min-width:140px; }
-    table{ min-width:800px; font-size:14px; }
+    table{ min-width:700px; font-size:14px; }
     th,td{ padding:12px; }
   }
 
@@ -205,12 +152,11 @@
         <thead>
           <tr>
             <th>Name</th>
-            <th>Contact</th>
+            <th>Phone</th>
             <th>Website</th>
             <th>Rating</th>
             <th>Reviews</th>
             <th>Address</th>
-            <th id="socialsHeader" style="display:none;">Socials</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -254,32 +200,17 @@ const h = (tag, attrs={}, ...kids) => {
   return el;
 };
 
-/** ================== Fetch helpers with 304 prevention ================== */
+/** ================== Fetch helpers ================== */
 async function fetchJSON(url, opts={}) {
-  // Add cache-busting and no-cache headers
-  const finalUrl = url.includes('?') ? `${url}&_t=${Date.now()}` : `${url}?_t=${Date.now()}`;
-  const res = await fetch(finalUrl, {
-    ...opts,
-    headers: {
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0',
-      ...opts.headers
-    }
-  });
+  const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   try { return await res.json(); } catch { return {}; }
 }
-
 async function postBestEffort(url, payload) {
   try {
     const res = await fetch(url, {
       method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'Cache-Control':'no-store',
-        'Pragma': 'no-cache'
-      },
+      headers:{'Content-Type':'application/json','Cache-Control':'no-store'},
       body: JSON.stringify(payload),
     });
     let body=null; try { body = await res.json(); } catch {}
@@ -310,13 +241,11 @@ async function postBestEffort(url, payload) {
   @keyframes sp{to{transform:rotate(360deg)}}`;
   const s = document.createElement('style'); s.id='toast-styles'; s.textContent = css; document.head.appendChild(s);
 })();
-
 function getToastHost(){
   let host = document.querySelector('.toast-wrap');
   if (!host){ host = document.createElement('div'); host.className='toast-wrap'; document.body.appendChild(host); }
   return host;
 }
-
 function showToast({title, desc, variant='info', loading=false, autoCloseMs=null}){
   const host = getToastHost();
   const el = document.createElement('div');
@@ -358,63 +287,6 @@ function showToast({title, desc, variant='info', loading=false, autoCloseMs=null
   };
 }
 
-/** ================== Helper functions for contact and socials ================== */
-function createSocialLink(platform, url) {
-  const platformNames = {
-    linkedin: 'LinkedIn',
-    facebook: 'Facebook', 
-    twitter: 'Twitter',
-    instagram: 'Instagram'
-  };
-  
-  const link = h('a', {
-    href: url,
-    target: '_blank',
-    class: 'social-link'
-  },
-    h('span', {class: `social-icon social-${platform}`}),
-    platformNames[platform] || platform
-  );
-  
-  return link;
-}
-
-function createContactCell(phone, email) {
-  const contactDiv = h('div', {class: 'contact-cell'});
-  
-  if (phone && phone !== '—') {
-    contactDiv.appendChild(h('div', {class: 'phone-number'}, phone));
-  }
-  
-  if (email && email !== '') {
-    contactDiv.appendChild(h('div', {class: 'email-address'}, email));
-  }
-  
-  if (!phone || phone === '—') {
-    contactDiv.appendChild(h('div', {class: 'phone-number'}, '—'));
-  }
-  
-  return contactDiv;
-}
-
-function createSocialsCell(socials) {
-  const socialsDiv = h('div', {class: 'socials-cell'});
-  let hasAnySocials = false;
-  
-  Object.entries(socials || {}).forEach(([platform, url]) => {
-    if (url && url !== '') {
-      socialsDiv.appendChild(createSocialLink(platform, url));
-      hasAnySocials = true;
-    }
-  });
-  
-  if (!hasAnySocials) {
-    socialsDiv.appendChild(h('span', {style: 'color: var(--muted); font-size: 12px;'}, '—'));
-  }
-  
-  return socialsDiv;
-}
-
 /** ================== Batches table ================== */
 /* Render table (used for manual refresh + the two controlled refreshes) */
 async function loadBatchesAndRender() {
@@ -452,7 +324,6 @@ async function loadBatchesAndRender() {
     return [];
   }
 }
-
 /* Fetch batches silently without re-rendering table */
 async function fetchBatchesOnly() {
   try {
@@ -465,76 +336,44 @@ async function fetchBatchesOnly() {
 async function showLeads(batch) {
   const leadsCard = document.getElementById('leadsCard');
   const title = document.getElementById('batchTitle');
-  const socialsHeader = document.getElementById('socialsHeader');
   title.textContent = batch.batch_id || '';
   const tbody = document.querySelector('#leadsTable tbody');
   tbody.innerHTML = '';
   leadsCard.style.display = 'block';
-  
-  // Hide socials column initially
-  socialsHeader.style.display = 'none';
-  
   try {
     const url = `${BASE}/webhook/ui/leads?batch_id=${encodeURIComponent(batch.batch_id)}&client_id=${encodeURIComponent(CLIENT_ID)}`;
     const data = await fetchJSON(url);
     const rows = data.data || [];
-    
-    // Check if any lead has socials to determine if we should show the column
-    let hasAnySocials = rows.some(l => {
-      const socials = l.socials || {};
-      return Object.values(socials).some(url => url && url !== '');
-    });
-    
-    if (hasAnySocials) {
-      socialsHeader.style.display = 'table-cell';
-    }
-    
     rows.forEach(l => {
-      const row = h('tr', {},
-        h('td', {}, l.name || 'N/A'),
-        h('td', {}, createContactCell(l.phone, l.email)),
-        h('td', {}, l.website ? h('a', {href: l.website, target: '_blank', class: 'link'}, 'Website') : '—'),
-        h('td', {}, (l.rating || l.rating === 0) ? `★ ${l.rating}` : '—'),
-        h('td', {}, (l.reviews || l.reviews === 0) ? String(l.reviews) : '—'),
-        h('td', {}, l.address || '—')
-      );
-      
-      // Only add socials cell if there are socials in this batch
-      if (hasAnySocials) {
-        row.appendChild(h('td', {}, createSocialsCell(l.socials)));
-      }
-      
-      tbody.appendChild(row);
+      tbody.appendChild(h('tr',{},
+        h('td',{}, l.name || 'N/A'),
+        h('td',{}, l.phone || '—'),
+        h('td',{}, l.website ? h('a',{href:l.website,target:'_blank',class:'link'}, 'Website') : '—'),
+        h('td',{}, (l.rating || l.rating === 0) ? `★ ${l.rating}` : '—'),
+        h('td',{}, (l.reviews || l.reviews === 0) ? String(l.reviews) : '—'),
+        h('td',{}, l.address || '—')
+      ));
     });
-    
     if (rows.length === 0) {
-      const colspan = hasAnySocials ? '7' : '6';
-      tbody.appendChild(h('tr', {}, h('td', {colspan: colspan, class: 'empty-state'}, 'No leads found')));
+      tbody.appendChild(h('tr',{}, h('td',{colspan:'6',class:'empty-state'}, 'No leads found')));
     }
   } catch(e) {
-    const colspan = socialsHeader.style.display === 'table-cell' ? '7' : '6';
-    tbody.appendChild(h('tr', {}, h('td', {colspan: colspan, class: 'empty-state'}, `Error: ${e.message}`)));
+    tbody.appendChild(h('tr',{}, h('td',{colspan:'6',class:'empty-state'}, `Error: ${e.message}`)));
   }
 }
 
-/** ================== Delete & Re-run with auto-close toasts ================== */
+/** ================== Delete & Re-run ================== */
 async function delBatch(b) {
   if (!confirm('Delete this batch and its leads?')) return;
   try {
     const res = await fetch(`${BASE}/webhook/delete-batch`, {
-      method:'POST', 
-      headers:{
-        'Content-Type':'application/json',
-        'Cache-Control':'no-store'
-      },
+      method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ batch_id: b.batch_id, client_id: CLIENT_ID })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    showToast({ title:'Deleted', desc:'Batch removed successfully.', variant:'success', autoCloseMs:3000 });
+    showToast({ title:'Deleted', desc:'Batch removed.', variant:'success', autoCloseMs:2200 });
     loadBatchesAndRender();
-  } catch(e) { 
-    showToast({ title:'Delete failed', desc:e.message, variant:'error', autoCloseMs:5000 }); 
-  }
+  } catch(e) { showToast({ title:'Delete failed', desc:e.message, variant:'error', autoCloseMs:4200 }); }
 }
 
 /** ================== Silent Run Watcher ==================
@@ -590,7 +429,7 @@ class RunWatcher {
           this.phase = 'processing';
           // Update toast (spinner stays)
           if (this.toast) this.toast.update({
-            title:'Processing…', desc:'Scrape is running. We'll notify when it completes.', variant:'warn', loading:true, autoCloseMs:null
+            title:'Processing…', desc:'Scrape is running. We’ll notify when it completes.', variant:'warn', loading:true, autoCloseMs:null
           });
           // Refresh table ONCE to show the Processing row
           if (!this.didRefreshOnProcessing) {
@@ -618,7 +457,7 @@ class RunWatcher {
 
     // Timeout fallback copy
     if (this.toast) this.toast.update({
-      title:'Still queued', desc:'You can click Refresh any time. We'll keep watching next run.', variant:'warn', loading:false, autoCloseMs:4000
+      title:'Still queued', desc:'You can click Refresh any time. We’ll keep watching next run.', variant:'warn', loading:false, autoCloseMs:4000
     });
     return false;
   }
