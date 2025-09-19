@@ -332,8 +332,83 @@ async function fetchBatchesOnly() {
   } catch { return []; }
 }
 
+ /** ================== Leads view ================== */
+ async function showLeads(batch) {
+  const leadsCard = document.getElementById('leadsCard');
+  const title = document.getElementById('batchTitle');
+  title.textContent = batch.batch_id || '';
+  const tbody = document.querySelector('#leadsTable tbody');
+  const thead = document.querySelector('#leadsTable thead');
+  tbody.innerHTML = '';
+  leadsCard.style.display = 'block';
+
+  try {
+    const url = `${BASE}/webhook/ui/leads?batch_id=${encodeURIComponent(batch.batch_id)}&client_id=${encodeURIComponent(CLIENT_ID)}`;
+    const resp = await fetchJSON(url);
+    const rows = resp.data || [];
+
+    // Detect if any row has email/socials
+    const hasEmail   = rows.some(r => (r.email || '').trim() !== '');
+    const hasSocials = rows.some(r => {
+      const s = r.socials || {};
+      return !!(s.linkedin || s.facebook || s.instagram || s.twitter);
+    });
+
+    // Build header dynamically
+    const baseHeads = ['Name','Phone','Website','Rating','Reviews','Address'];
+    const extraHeads = [];
+    if (hasEmail) extraHeads.push('Email');
+    if (hasSocials) extraHeads.push('Socials');
+
+    const allHeads = baseHeads.slice(0, 3)  // Name, Phone, Website
+      .concat(hasEmail ? ['Email'] : [])
+      .concat(hasSocials ? ['Socials'] : [])
+      .concat(baseHeads.slice(3));         // Rating, Reviews, Address
+
+    thead.innerHTML = `<tr>${allHeads.map(h => `<th>${h}</th>`).join('')}</tr>`;
+
+    // Row renderer helpers
+    const link = (href, text='Link') => href ? `<a class="link" target="_blank" rel="noopener" href="${href}">${text}</a>` : '—';
+    const socialsCell = (s={}) => {
+      const chips = [];
+      if (s.linkedin)  chips.push(link(s.linkedin,  'LinkedIn'));
+      if (s.facebook)  chips.push(link(s.facebook,  'Facebook'));
+      if (s.instagram) chips.push(link(s.instagram, 'Instagram'));
+      if (s.twitter)   chips.push(link(s.twitter,   'Twitter'));
+      return chips.length ? chips.join(' · ') : '—';
+    };
+
+    // Render rows
+    rows.forEach(l => {
+      const cells = [];
+      cells.push(`<td>${l.name || 'N/A'}</td>`);
+      cells.push(`<td>${l.phone || '—'}</td>`);
+      cells.push(`<td>${l.website ? link(l.website, 'Website') : '—'}</td>`);
+      if (hasEmail)   cells.push(`<td>${(l.email || '').trim() || '—'}</td>`);
+      if (hasSocials) cells.push(`<td>${socialsCell(l.socials)}</td>`);
+      cells.push(`<td>${(l.rating || l.rating === 0) ? `★ ${l.rating}` : '—'}</td>`);
+      cells.push(`<td>${(l.reviews || l.reviews === 0) ? String(l.reviews) : '—'}</td>`);
+      cells.push(`<td>${l.address || '—'}</td>`);
+      const tr = document.createElement('tr');
+      tr.innerHTML = cells.join('');
+      tbody.appendChild(tr);
+    });
+
+    if (rows.length === 0) {
+      tbody.appendChild(
+        h('tr',{}, h('td',{colspan:String(allHeads.length), class:'empty-state'}, 'No leads found'))
+      );
+    }
+  } catch(e) {
+    const theadCols = document.querySelectorAll('#leadsTable thead th').length || 6;
+    tbody.appendChild(
+      h('tr',{}, h('td',{colspan:String(theadCols), class:'empty-state'}, `Error: ${e.message}`))
+    );
+  }
+}
+ 
 /** ================== Leads view ================== */
-async function showLeads(batch) {
+/** async function showLeads(batch) {
   const leadsCard = document.getElementById('leadsCard');
   const title = document.getElementById('batchTitle');
   title.textContent = batch.batch_id || '';
@@ -360,7 +435,7 @@ async function showLeads(batch) {
   } catch(e) {
     tbody.appendChild(h('tr',{}, h('td',{colspan:'6',class:'empty-state'}, `Error: ${e.message}`)));
   }
-}
+} */
 
 /** ================== Delete & Re-run ================== */
 async function delBatch(b) {
