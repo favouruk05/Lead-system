@@ -201,36 +201,11 @@ const h = (tag, attrs={}, ...kids) => {
 };
 
 /** ================== Fetch helpers ================== */
-async function fetchJSON(url, opts = {}) {
-  // add cache-buster
-  const sep = url.includes('?') ? '&' : '?';
-  const busted = `${url}${sep}_=${Date.now()}`;
-
-  const baseOpts = {
-    cache: 'no-store',
-    headers: { 'Cache-Control': 'no-store', 'Pragma': 'no-cache', ...(opts.headers || {}) },
-    ...opts,
-  };
-
-  let res = await fetch(busted, baseOpts);
-
-  // retry once if 304
-  if (res.status === 304) {
-    res = await fetch(`${url}${sep}_=${Date.now()+1}`, baseOpts);
-  }
-
+async function fetchJSON(url, opts={}) {
+  const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-  // Try JSON first
-  try {
-    return await res.json();
-  } catch {
-    // Fallback: sometimes n8n sends text that is JSON
-    const text = await res.text();
-    try { return JSON.parse(text); } catch { return {}; }
-  }
+  try { return await res.json(); } catch { return {}; }
 }
-
 async function postBestEffort(url, payload) {
   try {
     const res = await fetch(url, {
@@ -357,149 +332,78 @@ async function fetchBatchesOnly() {
   } catch { return []; }
 }
 
-/** ================== Leads view ================== */
-// helper: render social chips under Website
-// helper: flatten MANY possible webhook shapes into a clean array of plain objects
-function normalizeLeads(data) {
-  let rows = [];
-
-  // Common shapes
-  if (Array.isArray(data)) rows = data;
-  else if (Array.isArray(data?.data)) rows = data.data;
-  else if (data?.data && typeof data.data === 'object') rows = [data.data];
-  else if (data && typeof data === 'object') rows = [data];
-
-  // If items are wrapped as { json: {...} } (n8n style), unwrap
-  rows = rows.map(r => (r && typeof r === 'object' && r.json ? r.json : r));
-
-  // Some nodes return { fields: {...} }
-  rows = rows.map(r => (r && typeof r === 'object' && r.fields ? r.fields : r));
-
-  // Filter out null/undefined and guarantee plain objects
-  rows = rows.filter(r => r && typeof r === 'object');
-
-  return rows;
-}
-
-// tiny helper for rendering social chips in Website cell
-function socialChips(socials = {}) {
-  const wrap = document.createElement('div');
-  wrap.style.display = 'flex';
-  wrap.style.flexWrap = 'wrap';
-  wrap.style.gap = '6px';
-  wrap.style.marginTop = '6px';
-
-  const add = (label, url) => {
-    if (!url) return;
-    const a = document.createElement('a');
-    a.href = url;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.textContent = label;
-    a.className = 'link';
-    a.style.fontSize = '12px';
-    a.style.padding = '2px 6px';
-    a.style.border = '1px solid var(--border)';
-    a.style.borderRadius = '999px';
-    wrap.appendChild(a);
-  };
-
-  add('LinkedIn', socials.linkedin);
-  add('Twitter',  socials.twitter);
-  add('Facebook', socials.facebook);
-  add('Instagram',socials.instagram);
-
-  return wrap.childNodes.length ? wrap : '';
-}
-
-async function showLeads(batch) {
+ /** ================== Leads view ================== */
+ async function showLeads(batch) {
   const leadsCard = document.getElementById('leadsCard');
   const title = document.getElementById('batchTitle');
-  const tbody = document.querySelector('#leadsTable tbody');
-
   title.textContent = batch.batch_id || '';
+  const tbody = document.querySelector('#leadsTable tbody');
+  const thead = document.querySelector('#leadsTable thead');
   tbody.innerHTML = '';
   leadsCard.style.display = 'block';
 
   try {
     const url = `${BASE}/webhook/ui/leads?batch_id=${encodeURIComponent(batch.batch_id)}&client_id=${encodeURIComponent(CLIENT_ID)}`;
-    const data = await fetchJSON(url);
+    const resp = await fetchJSON(url);
+    const rows = resp.data || [];
 
-    // 🔍 normalize and log count (TEMP debug)
-    let rows = normalizeLeads(data);
-    console.log('LEADS raw:', data);
-    console.log('LEADS normalized length:', rows.length);
+    // Detect if any row has email/socials
+    const hasEmail   = rows.some(r => (r.email || '').trim() !== '');
+    const hasSocials = rows.some(r => {
+      const s = r.socials || {};
+      return !!(s.linkedin || s.facebook || s.instagram || s.twitter);
+    });
 
+    // Build header dynamically
+    const baseHeads = ['Name','Phone','Website','Rating','Reviews','Address'];
+    const extraHeads = [];
+    if (hasEmail) extraHeads.push('Email');
+    if (hasSocials) extraHeads.push('Socials');
+
+    const allHeads = baseHeads.slice(0, 3)  // Name, Phone, Website
+      .concat(hasEmail ? ['Email'] : [])
+      .concat(hasSocials ? ['Socials'] : [])
+      .concat(baseHeads.slice(3));         // Rating, Reviews, Address
+
+    thead.innerHTML = `<tr>${allHeads.map(h => `<th>${h}</th>`).join('')}</tr>`;
+
+    // Row renderer helpers
+    const link = (href, text='Link') => href ? `<a class="link" target="_blank" rel="noopener" href="${href}">${text}</a>` : '—';
+    const socialsCell = (s={}) => {
+      const chips = [];
+      if (s.linkedin)  chips.push(link(s.linkedin,  'LinkedIn'));
+      if (s.facebook)  chips.push(link(s.facebook,  'Facebook'));
+      if (s.instagram) chips.push(link(s.instagram, 'Instagram'));
+      if (s.twitter)   chips.push(link(s.twitter,   'Twitter'));
+      return chips.length ? chips.join(' · ') : '—';
+    };
+
+    // Render rows
     rows.forEach(l => {
+      const cells = [];
+      cells.push(`<td>${l.name || 'N/A'}</td>`);
+      cells.push(`<td>${l.phone || '—'}</td>`);
+      cells.push(`<td>${l.website ? link(l.website, 'Website') : '—'}</td>`);
+      if (hasEmail)   cells.push(`<td>${(l.email || '').trim() || '—'}</td>`);
+      if (hasSocials) cells.push(`<td>${socialsCell(l.socials)}</td>`);
+      cells.push(`<td>${(l.rating || l.rating === 0) ? `★ ${l.rating}` : '—'}</td>`);
+      cells.push(`<td>${(l.reviews || l.reviews === 0) ? String(l.reviews) : '—'}</td>`);
+      cells.push(`<td>${l.address || '—'}</td>`);
       const tr = document.createElement('tr');
-
-      // Name
-      const tdName = document.createElement('td');
-      tdName.textContent = l.name || l.Name || 'N/A';
-
-      // Phone (always) + Email (if present) on a second line
-      const tdPhone = document.createElement('td');
-      tdPhone.textContent = l.phone || l.Phone || '—';
-      const email = (l.email || l.Email || '').toString();
-      if (email && email.includes('@')) {
-        const br = document.createElement('br');
-        const em = document.createElement('a');
-        em.href = `mailto:${email}`;
-        em.textContent = email;
-        em.className = 'link';
-        em.style.fontSize = '12px';
-        em.style.opacity = '0.9';
-        tdPhone.appendChild(br);
-        tdPhone.appendChild(em);
-      }
-
-      // Website + socials chips under it
-      const tdWeb = document.createElement('td');
-      const website = l.website || l.Website || '';
-      if (website) {
-        const a = document.createElement('a');
-        a.href = website;
-        a.target = '_blank';
-        a.className = 'link';
-        a.textContent = 'Website';
-        tdWeb.appendChild(a);
-      } else {
-        tdWeb.textContent = '—';
-      }
-
-      // socials object if present (your mapper puts this under l.socials)
-      const chips = socialChips(l.socials || l.Socials || {});
-      if (chips) tdWeb.appendChild(chips);
-
-      // Rating
-      const tdRating = document.createElement('td');
-      const rating = (l.rating ?? l.Rating);
-      tdRating.textContent = (rating || rating === 0) ? `★ ${rating}` : '—';
-
-      // Reviews
-      const tdReviews = document.createElement('td');
-      const reviews = (l.reviews ?? l.Reviews);
-      tdReviews.textContent = (reviews || reviews === 0) ? String(reviews) : '—';
-
-      // Address
-      const tdAddr = document.createElement('td');
-      tdAddr.textContent = l.address || l.Address || '—';
-
-      tr.appendChild(tdName);
-      tr.appendChild(tdPhone);   // ✅ phone column always shown
-      tr.appendChild(tdWeb);     // website + socials under it
-      tr.appendChild(tdRating);
-      tr.appendChild(tdReviews);
-      tr.appendChild(tdAddr);
-
+      tr.innerHTML = cells.join('');
       tbody.appendChild(tr);
     });
 
     if (rows.length === 0) {
-      tbody.appendChild(h('tr',{}, h('td',{colspan:'6',class:'empty-state'}, 'No leads found')));
+      tbody.appendChild(
+        h('tr',{}, h('td',{colspan:String(allHeads.length), class:'empty-state'}, 'No leads found'))
+      );
     }
   } catch(e) {
-    tbody.appendChild(h('tr',{}, h('td',{colspan:'6',class:'empty-state'}, `Error: ${e.message}`)));
+    const theadCols = document.querySelectorAll('#leadsTable thead th').length || 6;
+    tbody.appendChild(
+      h('tr',{}, h('td',{colspan:String(theadCols), class:'empty-state'}, `Error: ${e.message}`))
+    );
   }
 }
  
