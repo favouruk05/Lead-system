@@ -202,21 +202,34 @@ const h = (tag, attrs={}, ...kids) => {
 
 /** ================== Fetch helpers ================== */
 async function fetchJSON(url, opts = {}) {
+  // add cache-buster
   const sep = url.includes('?') ? '&' : '?';
-  const finalUrl = `${url}${sep}_=${Date.now()}`;
+  const busted = `${url}${sep}_=${Date.now()}`;
+
   const baseOpts = {
     cache: 'no-store',
     headers: { 'Cache-Control': 'no-store', 'Pragma': 'no-cache', ...(opts.headers || {}) },
     ...opts,
   };
-  let res = await fetch(finalUrl, baseOpts);
+
+  let res = await fetch(busted, baseOpts);
+
+  // retry once if 304
   if (res.status === 304) {
     res = await fetch(`${url}${sep}_=${Date.now()+1}`, baseOpts);
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  try { return await res.json(); } catch { return {}; }
-}
 
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  // Try JSON first
+  try {
+    return await res.json();
+  } catch {
+    // Fallback: sometimes n8n sends text that is JSON
+    const text = await res.text();
+    try { return JSON.parse(text); } catch { return {}; }
+  }
+}
 
 async function postBestEffort(url, payload) {
   try {
@@ -346,6 +359,29 @@ async function fetchBatchesOnly() {
 
 /** ================== Leads view ================== */
 // helper: render social chips under Website
+// helper: flatten MANY possible webhook shapes into a clean array of plain objects
+function normalizeLeads(data) {
+  let rows = [];
+
+  // Common shapes
+  if (Array.isArray(data)) rows = data;
+  else if (Array.isArray(data?.data)) rows = data.data;
+  else if (data?.data && typeof data.data === 'object') rows = [data.data];
+  else if (data && typeof data === 'object') rows = [data];
+
+  // If items are wrapped as { json: {...} } (n8n style), unwrap
+  rows = rows.map(r => (r && typeof r === 'object' && r.json ? r.json : r));
+
+  // Some nodes return { fields: {...} }
+  rows = rows.map(r => (r && typeof r === 'object' && r.fields ? r.fields : r));
+
+  // Filter out null/undefined and guarantee plain objects
+  rows = rows.filter(r => r && typeof r === 'object');
+
+  return rows;
+}
+
+// tiny helper for rendering social chips in Website cell
 function socialChips(socials = {}) {
   const wrap = document.createElement('div');
   wrap.style.display = 'flex';
@@ -388,32 +424,28 @@ async function showLeads(batch) {
   try {
     const url = `${BASE}/webhook/ui/leads?batch_id=${encodeURIComponent(batch.batch_id)}&client_id=${encodeURIComponent(CLIENT_ID)}`;
     const data = await fetchJSON(url);
-    console.log('LEADS raw response:', data); // TEMP
-  
-    // normalize to array
-    let rows = [];
-    if (Array.isArray(data)) rows = data;
-    else if (Array.isArray(data?.data)) rows = data.data;
-    else if (data?.data && typeof data.data === 'object') rows = [data.data];
-    else if (data && typeof data === 'object' && (data.id || data.name)) rows = [data];
-    
-    console.log('LEADS normalized count:', rows.length); // should be 5
+
+    // 🔍 normalize and log count (TEMP debug)
+    let rows = normalizeLeads(data);
+    console.log('LEADS raw:', data);
+    console.log('LEADS normalized length:', rows.length);
 
     rows.forEach(l => {
       const tr = document.createElement('tr');
 
       // Name
       const tdName = document.createElement('td');
-      tdName.textContent = l.name || 'N/A';
+      tdName.textContent = l.name || l.Name || 'N/A';
 
-      // Phone (always) + Email (if present) beneath
+      // Phone (always) + Email (if present) on a second line
       const tdPhone = document.createElement('td');
-      tdPhone.textContent = l.phone || '—';
-      if (l.email && typeof l.email === 'string' && l.email.includes('@')) {
+      tdPhone.textContent = l.phone || l.Phone || '—';
+      const email = (l.email || l.Email || '').toString();
+      if (email && email.includes('@')) {
         const br = document.createElement('br');
         const em = document.createElement('a');
-        em.href = `mailto:${l.email}`;
-        em.textContent = l.email;
+        em.href = `mailto:${email}`;
+        em.textContent = email;
         em.className = 'link';
         em.style.fontSize = '12px';
         em.style.opacity = '0.9';
@@ -421,11 +453,12 @@ async function showLeads(batch) {
         tdPhone.appendChild(em);
       }
 
-      // Website + socials chips below
+      // Website + socials chips under it
       const tdWeb = document.createElement('td');
-      if (l.website) {
+      const website = l.website || l.Website || '';
+      if (website) {
         const a = document.createElement('a');
-        a.href = l.website;
+        a.href = website;
         a.target = '_blank';
         a.className = 'link';
         a.textContent = 'Website';
@@ -433,24 +466,28 @@ async function showLeads(batch) {
       } else {
         tdWeb.textContent = '—';
       }
-      const chips = socialChips(l.socials || {});
+
+      // socials object if present (your mapper puts this under l.socials)
+      const chips = socialChips(l.socials || l.Socials || {});
       if (chips) tdWeb.appendChild(chips);
 
       // Rating
       const tdRating = document.createElement('td');
-      tdRating.textContent = (l.rating || l.rating === 0) ? `★ ${l.rating}` : '—';
+      const rating = (l.rating ?? l.Rating);
+      tdRating.textContent = (rating || rating === 0) ? `★ ${rating}` : '—';
 
       // Reviews
       const tdReviews = document.createElement('td');
-      tdReviews.textContent = (l.reviews || l.reviews === 0) ? String(l.reviews) : '—';
+      const reviews = (l.reviews ?? l.Reviews);
+      tdReviews.textContent = (reviews || reviews === 0) ? String(reviews) : '—';
 
       // Address
       const tdAddr = document.createElement('td');
-      tdAddr.textContent = l.address || '—';
+      tdAddr.textContent = l.address || l.Address || '—';
 
       tr.appendChild(tdName);
-      tr.appendChild(tdPhone);   // ✅ phone always visible
-      tr.appendChild(tdWeb);     // website + socials (if any)
+      tr.appendChild(tdPhone);   // ✅ phone column always shown
+      tr.appendChild(tdWeb);     // website + socials under it
       tr.appendChild(tdRating);
       tr.appendChild(tdReviews);
       tr.appendChild(tdAddr);
