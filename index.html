@@ -202,27 +202,21 @@ const h = (tag, attrs={}, ...kids) => {
 
 /** ================== Fetch helpers ================== */
 async function fetchJSON(url, opts = {}) {
-  // add cache-buster to avoid 304 with empty body
   const sep = url.includes('?') ? '&' : '?';
   const finalUrl = `${url}${sep}_=${Date.now()}`;
-
   const baseOpts = {
     cache: 'no-store',
     headers: { 'Cache-Control': 'no-store', 'Pragma': 'no-cache', ...(opts.headers || {}) },
     ...opts,
   };
-
   let res = await fetch(finalUrl, baseOpts);
-
-  // If server still returns 304, retry once with a new buster
   if (res.status === 304) {
     res = await fetch(`${url}${sep}_=${Date.now()+1}`, baseOpts);
   }
-
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
   try { return await res.json(); } catch { return {}; }
 }
+
 
 async function postBestEffort(url, payload) {
   try {
@@ -394,13 +388,16 @@ async function showLeads(batch) {
   try {
     const url = `${BASE}/webhook/ui/leads?batch_id=${encodeURIComponent(batch.batch_id)}&client_id=${encodeURIComponent(CLIENT_ID)}`;
     const data = await fetchJSON(url);
-
+    console.log('LEADS raw response:', data); // TEMP
+  
     // normalize to array
     let rows = [];
     if (Array.isArray(data)) rows = data;
     else if (Array.isArray(data?.data)) rows = data.data;
     else if (data?.data && typeof data.data === 'object') rows = [data.data];
     else if (data && typeof data === 'object' && (data.id || data.name)) rows = [data];
+    
+    console.log('LEADS normalized count:', rows.length); // should be 5
 
     rows.forEach(l => {
       const tr = document.createElement('tr');
